@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("hpiFit Example");
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
-    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/MEG/sample/test_hpiFit_raw.fif");
+    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_200221_162706_TestSubject_hpi_test_raw.fif");
 
     parser.addOption(inputOption);
 
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo);
+    HPIFit HPI = HPIFit(pFiffInfo,true);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
@@ -235,5 +235,5 @@ int main(int argc, char *argv[])
             qInfo() << "dev_head_t has been updated.";
         }
     }
-    // IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/position.txt");
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_MEG.txt");
 }
