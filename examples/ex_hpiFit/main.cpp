@@ -127,8 +127,8 @@ int main(int argc, char *argv[])
     // create time vector that specifies when to fit
     float dTSec = 0.1;                              // time between hpi fits
     int iQuantumT = floor(dTSec*pFiffInfo->sfreq);   // samples between fits
-    int iN = floor((last-(first+iQuantum))/iQuantumT);
-    RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-1) * dTSec;
+    int iN = floor((last-first)/iQuantumT);
+    RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-10) * dTSec;
 
     // To fit at specific times outcommend the following block
     // Read Quaternion File
