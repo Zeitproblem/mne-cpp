@@ -240,10 +240,10 @@ int main(int argc, char *argv[])
         dError = std::accumulate(vecError.begin(), vecError.end(), .0) / vecError.size();
         if(dError < 0.010) {
             pFiffInfo->dev_head_t = transDevHead;
+            HPIFit::storeHeadPosition(vecTime(i), pFiffInfo->dev_head_t.trans, matPosition, vecGoF, vecError);
         } else {
             qInfo() << "Large error.";
         }
-
     }
-    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_MEG.txt");
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_01_BabyMeg_MEG.txt");
 }
