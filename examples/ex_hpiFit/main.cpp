@@ -142,6 +142,7 @@ int main(int argc, char *argv[])
     // setup informations for HPI fit (VectorView)
     QVector<int> vecFreqs {154,158,161,166};
     QVector<double> vecError;
+    double dError = 0;
     VectorXd vecGoF;
     FiffDigPointSet fittedPointSet;
 
@@ -168,7 +169,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo,false);
+    HPIFit HPI = HPIFit(pFiffInfo,true);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
@@ -212,11 +213,13 @@ int main(int argc, char *argv[])
         }
         qInfo() << "[done]";
 
+        transDevHead = pFiffInfo->dev_head_t;
+
         qInfo() << "HPI-Fit...";
         timer.start();
         HPI.fitHPI(matData,
                    matProjectors,
-                   pFiffInfo->dev_head_t,
+                   transDevHead,
                    vecFreqs,
                    vecError,
                    vecGoF,
@@ -232,9 +235,16 @@ int main(int argc, char *argv[])
         matPosition(i,9) = fTimer;
         // if big head displacement occures, update debHeadTrans
         if(MNEMath::compareTransformation(transDevHead.trans, pFiffInfo->dev_head_t.trans, fThreshRot, fThreshTrans)) {
-            transDevHead = pFiffInfo->dev_head_t;
-            qInfo() << "dev_head_t has been updated.";
+            qInfo() << "Big Head Movement occured.";
         }
+        // only update transformation matrix if error is smaller then threshold. otherwise use old one. 
+        dError = std::accumulate(vecError.begin(), vecError.end(), .0) / vecError.size();
+        if(dError < 0.010) {
+            pFiffInfo->dev_head_t = transDevHead;
+        } else {
+            qInfo() << "Large error."
+        }
+
     }
     IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_MEG.txt");
 }
