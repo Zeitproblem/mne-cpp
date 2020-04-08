@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo,true);
+    HPIFit HPI = HPIFit(pFiffInfo,false);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
@@ -203,6 +203,7 @@ int main(int argc, char *argv[])
         if (to > last) {
             to = last;
             qWarning() << "Block size < iQuantum " << iQuantum;
+            break;
         }
         // Reading
         if(!raw.read_raw_segment(matData, matTimes, from, to)) {
