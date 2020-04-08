@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
     // create time vector that specifies when to fit
     float dTSec = 0.1;                              // time between hpi fits
     int iQuantumT = floor(dTSec*pFiffInfo->sfreq);   // samples between fits
-    int iN = floor((last-first)/iQuantumT);
+    int iN = floor((last-(first+iQuantum))/iQuantumT);
     RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-1) * dTSec;
 
     // To fit at specific times outcommend the following block
@@ -204,7 +204,6 @@ int main(int argc, char *argv[])
         if (to > last) {
             to = last;
             qWarning() << "Block size < iQuantum " << iQuantum;
-            break;
         }
         // Reading
         if(!raw.read_raw_segment(matData, matTimes, from, to)) {
