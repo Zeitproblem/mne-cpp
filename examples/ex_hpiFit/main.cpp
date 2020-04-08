@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo,true);
+    HPIFit HPI = HPIFit(pFiffInfo,false);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
