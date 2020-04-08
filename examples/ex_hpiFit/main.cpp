@@ -241,7 +241,7 @@ int main(int argc, char *argv[])
         if(dError < 0.010) {
             pFiffInfo->dev_head_t = transDevHead;
         } else {
-            qInfo() << "Large error."
+            qInfo() << "Large error.";
         }
 
     }
