@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("hpiFit Example");
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
-    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/200221_162706_TestSubject_hpi_test_raw/200221_162706_TestSubject_hpi_test_raw.fif");
+    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/200221_162706_TestSubject_hpi_test_raw/200221_162706_TestSubject_hpi_test_raw.fif");
 
     parser.addOption(inputOption);
 
