@@ -169,7 +169,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo,false);
+    HPIFit HPI = HPIFit(pFiffInfo,true);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
@@ -245,5 +245,5 @@ int main(int argc, char *argv[])
             qInfo() << "Large error.";
         }
     }
-    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_01_BabyMeg_MEG.txt");
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_MEG.txt");
 }
