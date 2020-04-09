@@ -43,13 +43,15 @@
 #include <fiff/fiff_info.h>
 #include <fiff/fiff_dig_point_set.h>
 
+#include <fwd/fwd_coil_set.h>
+
 #include <inverse/hpiFit/hpifit.h>
+
+#include <mne/mne.h>
 
 #include <utils/ioutils.h>
 #include <utils/generics/applicationlogger.h>
 #include <utils/mnemath.h>
-
-#include <fwd/fwd_coil_set.h>
 
 //=============================================================================================================
 // Qt INCLUDES
@@ -70,6 +72,7 @@ using namespace INVERSELIB;
 using namespace FIFFLIB;
 using namespace UTILSLIB;
 using namespace Eigen;
+using namespace MNELIB;
 
 //=============================================================================================================
 // MAIN
@@ -96,16 +99,40 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("hpiFit Example");
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
-    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/200221_162706_TestSubject_hpi_test_raw/200221_162706_TestSubject_hpi_test_raw.fif");
+    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_170307_104229_baby_doll_01_raw.fif");
+    QCommandLineOption digitOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_fastscan_20170202_babydoll_set1.fif");
 
     parser.addOption(inputOption);
-
+    parser.addOption(digitOption);
     parser.process(a);
 
     // Init data loading and writing
     QFile t_fileIn(parser.value(inputOption));
+    QFile t_fileDigit(parser.value(digitOption));
     FiffRawData raw(t_fileIn);
+
+    FiffDigPointSet digSet(t_fileDigit);
+
+    bool keep_comp = false;
+    int dest_comp = 101;
+
+    MNE::setup_compensators(raw,
+                            dest_comp,
+                            keep_comp);
+
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(raw.info));
+
+    QList<FiffDigPoint> lDigSet;
+
+    for(int i = 0; i < digSet.size(); ++i) {
+        switch(digSet[i].kind) {
+            case FIFFV_POINT_HPI: {
+                lDigSet.append(digSet[i]);
+            }
+        }
+    }
+
+    pFiffInfo->dig = lDigSet;
 
     // Setup comparison of transformation matrices
     FiffCoordTrans transDevHead = pFiffInfo->dev_head_t;    // transformation that only updates after big head movements
@@ -140,11 +167,20 @@ int main(int argc, char *argv[])
     MatrixXd matPosition;              // matPosition matrix to save quaternions etc.
 
     // setup informations for HPI fit (VectorView)
-    QVector<int> vecFreqs {154,158,161,166};
+    QVector<int> vecFreqs {155,165,190,220};
     QVector<double> vecError;
     double dError = 0;
     VectorXd vecGoF;
     FiffDigPointSet fittedPointSet;
+
+    // Setup Comps
+    MatrixXd matComp = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
+
+    FiffCtfComp newComp;
+    //Do this always from 0 since we always read new raw data, we never actually perform a multiplication on already existing data
+    if(pFiffInfo->make_compensator(0, 101, newComp)) {
+        matComp = newComp.data->data;
+    }
 
     // Use SSP + SGM + calibration
     MatrixXd matProjectors = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
@@ -168,32 +204,9 @@ int main(int argc, char *argv[])
     // if debugging files are necessary set bDoDebug = true;
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
+    bool bDoFastFit = true;
 
-    HPIFit HPI = HPIFit(pFiffInfo,true);
-
-    // ordering of frequencies
-    from = first + vecTime(0)*pFiffInfo->sfreq;
-    to = from + iQuantum;
-    if(!raw.read_raw_segment(matData, matTimes, from, to)) {
-        qCritical("error during read_raw_segment");
-        return -1;
-    }
-    qInfo() << "[done]";
-
-    // order frequencies
-    qInfo() << "Find Order...";
-    timer.start();
-    HPI.findOrder(matData,
-                  matProjectors,
-                  pFiffInfo->dev_head_t,
-                  vecFreqs,
-                  vecError,
-                  vecGoF,
-                  fittedPointSet,
-                  pFiffInfo);
-    qInfo() << "Ordered Frequencies: ";
-    qInfo() << "findOrder() took" << timer.elapsed() << "milliseconds";
-    qInfo() << "[done]";
+    HPIFit HPI = HPIFit(pFiffInfo,bDoFastFit);
 
     float fTimer = 0.0;
 
@@ -232,18 +245,14 @@ int main(int argc, char *argv[])
 
         HPIFit::storeHeadPosition(vecTime(i), pFiffInfo->dev_head_t.trans, matPosition, vecGoF, vecError);
         matPosition(i,9) = fTimer;
-        // if big head displacement occures, update debHeadTrans
-        if(MNEMath::compareTransformation(transDevHead.trans, pFiffInfo->dev_head_t.trans, fThreshRot, fThreshTrans)) {
-            qInfo() << "Big Head Movement occured.";
-        }
+
         // only update transformation matrix if error is smaller then threshold. otherwise use old one. 
         dError = std::accumulate(vecError.begin(), vecError.end(), .0) / vecError.size();
         if(dError < 0.010) {
             pFiffInfo->dev_head_t = transDevHead;
-            HPIFit::storeHeadPosition(vecTime(i), pFiffInfo->dev_head_t.trans, matPosition, vecGoF, vecError);
         } else {
             qInfo() << "Large error.";
         }
     }
-    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_MEG.txt");
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_Home.txt");
 }
