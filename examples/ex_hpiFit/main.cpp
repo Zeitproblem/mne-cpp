@@ -100,35 +100,36 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
     QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_170307_104229_baby_doll_01_raw.fif");
-    QCommandLineOption digitOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_fastscan_20170202_babydoll_set1.fif");
 
     parser.addOption(inputOption);
-    parser.addOption(digitOption);
     parser.process(a);
 
     // Init data loading and writing
     QFile t_fileIn(parser.value(inputOption));
-    QFile t_fileDigit(parser.value(digitOption));
+    QFile t_fileDigit(QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/BabyMeg_fastscan_20170202_babydoll_set1.fif");
     FiffRawData raw(t_fileIn);
 
-    FiffDigPointSet digSet(t_fileDigit);
-
-    bool keep_comp = false;
-    int dest_comp = 101;
-
-    MNE::setup_compensators(raw,
-                            dest_comp,
-                            keep_comp);
-
+    // Setup FiffInfo
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(raw.info));
 
+    // Read digPoints
+    FiffDigPointSet t_digSet(t_fileDigit);
     QList<FiffDigPoint> lDigSet;
 
-    for(int i = 0; i < digSet.size(); ++i) {
-        switch(digSet[i].kind) {
+    for(int i = 0; i < t_digSet.size(); ++i) {
+        switch(t_digSet[i].kind) {
             case FIFFV_POINT_HPI: {
-                lDigSet.append(digSet[i]);
+                lDigSet.append(t_digSet[i]);
+                break;
             }
+
+            case FIFFV_POINT_CARDINAL:
+                lDigSet.append(t_digSet[i]);
+                break;
+
+            case FIFFV_POINT_EEG:
+                lDigSet.append(t_digSet[i]);
+                break;
         }
     }
 
@@ -173,15 +174,6 @@ int main(int argc, char *argv[])
     VectorXd vecGoF;
     FiffDigPointSet fittedPointSet;
 
-    // Setup Comps
-    MatrixXd matComp = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
-
-    FiffCtfComp newComp;
-    //Do this always from 0 since we always read new raw data, we never actually perform a multiplication on already existing data
-    if(pFiffInfo->make_compensator(0, 101, newComp)) {
-        matComp = newComp.data->data;
-    }
-
     // Use SSP + SGM + calibration
     MatrixXd matProjectors = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
 
@@ -195,16 +187,28 @@ int main(int argc, char *argv[])
 
     //Create the projector for all SSP's on
     infoTemp.make_projector(matProjectors);
-
     //set columns of matrix to zero depending on bad channels indexes
     for(qint32 j = 0; j < infoTemp.bads.size(); ++j) {
         matProjectors.col(infoTemp.ch_names.indexOf(infoTemp.bads.at(j))).setZero();
     }
 
+    // Setup Compensator
+    MatrixXd matComp = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
+    FiffCtfComp newComp;
+    //Do this always from 0 since we always read new raw data, we never actually perform a multiplication on already existing data
+    if(pFiffInfo->make_compensator(0, 101, newComp)) {
+        matComp = newComp.data->data;
+    }
+
+    MatrixXd m_matCompProjectors = matProjectors * matComp;
+
     // if debugging files are necessary set bDoDebug = true;
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
+
+    // Init HpiFit
     bool bDoFastFit = true;
+    pFiffInfo->linefreq = 60;
 
     HPIFit HPI = HPIFit(pFiffInfo,bDoFastFit);
 
@@ -230,7 +234,7 @@ int main(int argc, char *argv[])
         qInfo() << "HPI-Fit...";
         timer.start();
         HPI.fitHPI(matData,
-                   matProjectors,
+                   m_matCompProjectors,
                    transDevHead,
                    vecFreqs,
                    vecError,
@@ -254,5 +258,5 @@ int main(int argc, char *argv[])
             qInfo() << "Large error.";
         }
     }
-    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_00_BabyMeg_Home.txt");
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_01_BabyMeg_Home.txt");
 }
