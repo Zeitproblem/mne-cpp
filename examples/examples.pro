@@ -56,6 +56,7 @@ SUBDIRS += \
     ex_inverse_mne \
     ex_make_inverse_operator \
     ex_make_layout \
+    ex_movementCompensation \
     ex_read_bem \
     ex_read_epochs \
     ex_read_evoked \
