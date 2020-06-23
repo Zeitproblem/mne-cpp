@@ -42,6 +42,8 @@
 #include <fiff/fiff.h>
 #include <fiff/fiff_info.h>
 #include <fiff/fiff_dig_point_set.h>
+#include <fiff/fiff_ch_info.h>
+#include <fiff/c/fiff_digitizer_data.h>
 
 #include <inverse/hpiFit/hpifit.h>
 
@@ -51,16 +53,44 @@
 
 #include <fwd/fwd_coil_set.h>
 
+#include <disp3D/viewers/abstractview.h>
+#include <disp3D/engine/model/data3Dtreemodel.h>
+
+#include <fs/surfaceset.h>
+#include <fs/annotationset.h>
+
+#include <disp/viewers/control3dview.h>
+#include <disp3D/viewers/networkview.h>
+#include <disp3D/engine/model/items/network/networktreeitem.h>
+#include <disp3D/engine/model/items/sourcedata/mnedatatreeitem.h>
+#include <disp3D/engine/model/items/sensorspace/sensorsettreeitem.h>
+#include <disp3D/engine/model/data3Dtreemodel.h>
+#include <disp3D/engine/model/items/freesurfer/fssurfacetreeitem.h>
+#include <disp3D/engine/view/view3D.h>
+#include <disp3D/engine/model/data3Dtreemodel.h>
+#include <disp3D/engine/delegate/data3Dtreedelegate.h>
+#include <disp3D/engine/model/items/bem/bemtreeitem.h>
+#include <disp3D/engine/model/items/bem/bemsurfacetreeitem.h>
+#include <disp3D/engine/model/items/digitizer/digitizertreeitem.h>
+#include <disp3D/engine/model/items/digitizer/digitizersettreeitem.h>
+
+#include <mne/c/mne_msh_display_surface_set.h>
+#include <mne/c/mne_surface_or_volume.h>
+
 //=============================================================================================================
 // QT INCLUDES
 //=============================================================================================================
 
+#include <QApplication>
 #include <QtCore/QCoreApplication>
 #include <QFile>
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QGenericMatrix>
 #include <QElapsedTimer>
+#include <QAction>
+#include <Qt3DCore/QTransform>
+#include <QPointer>
 
 //=============================================================================================================
 // Eigen
@@ -74,6 +104,70 @@ using namespace INVERSELIB;
 using namespace FIFFLIB;
 using namespace UTILSLIB;
 using namespace Eigen;
+using namespace DISP3DLIB;
+using namespace FSLIB;
+using namespace MNELIB;
+
+//=============================================================================================================
+// member variables
+//=============================================================================================================
+Qt3DCore::QTransform m_tAlignment;
+//=============================================================================================================
+
+void alignFiducials(const QString& sFilePath, QPointer<DISP3DLIB::BemTreeItem> m_pBemHeadAvr)
+{
+    //Calculate the alignment of the fiducials
+    MneMshDisplaySurfaceSet* pMneMshDisplaySurfaceSet = new MneMshDisplaySurfaceSet();
+    MneMshDisplaySurfaceSet::add_bem_surface(pMneMshDisplaySurfaceSet,
+                                             QCoreApplication::applicationDirPath() + "/resources/general/hpiAlignment/fsaverage-head.fif",
+                                             FIFFV_BEM_SURF_ID_HEAD,
+                                             "head",
+                                             1,
+                                             1);
+
+    MneMshDisplaySurface* surface = pMneMshDisplaySurfaceSet->surfs[0];
+
+    QFile t_fileDigData(sFilePath);
+    FiffDigitizerData* t_digData = new FiffDigitizerData(t_fileDigData);
+
+    QFile t_fileDigDataReference(QCoreApplication::applicationDirPath() + "/resources/general/hpiAlignment/fsaverage-fiducials.fif");
+
+    float scales[3];
+    QScopedPointer<FiffDigitizerData> t_digDataReference(new FiffDigitizerData(t_fileDigDataReference));
+    MneSurfaceOrVolume::align_fiducials(t_digData,
+                                        t_digDataReference.data(),
+                                        surface,
+                                        10,
+                                        1,
+                                        0,
+                                        scales);
+
+    QMatrix4x4 invMat;
+
+    // use inverse transform
+    for(int r = 0; r < 3; ++r) {
+        for(int c = 0; c < 3; ++c) {
+            // also apply scaling factor
+            invMat(r,c) = t_digData->head_mri_t_adj->invrot(r,c) * scales[0];
+        }
+    }
+    invMat(0,3) = t_digData->head_mri_t_adj->invmove(0);
+    invMat(1,3) = t_digData->head_mri_t_adj->invmove(1);
+    invMat(2,3) = t_digData->head_mri_t_adj->invmove(2);
+
+    Qt3DCore::QTransform identity;
+    m_tAlignment.setMatrix(invMat);
+
+    // align and scale average head (now in head space)
+    QList<QStandardItem*> itemList = m_pBemHeadAvr->findChildren(Data3DTreeModelItemTypes::BemSurfaceItem);
+    for(int j = 0; j < itemList.size(); ++j) {
+        if(BemSurfaceTreeItem* pBemItem = dynamic_cast<BemSurfaceTreeItem*>(itemList.at(j))) {
+            pBemItem->setTransform(m_tAlignment);
+        }
+    }
+
+    delete pMneMshDisplaySurfaceSet;
+}
 
 //=============================================================================================================
 // MAIN
@@ -91,7 +185,7 @@ using namespace Eigen;
 int main(int argc, char *argv[])
 {
     qInstallMessageHandler(UTILSLIB::ApplicationLogger::customLogWriter);
-    QCoreApplication a(argc, argv);
+    QApplication a(argc, argv);
 
     // Command Line Parser
     QCommandLineParser parser;
@@ -106,10 +200,43 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // Load data
-    QFile t_fileIn(QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
-    FiffRawData rawData(t_fileIn);
+    QFile t_fileRaw(QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
+    QFile t_fileMriName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/all-trans.fif");
+    QFile t_fileBemName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-5120-5120-5120-bem.fif");
+    QFile t_fileSrcName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-oct-6-src.fif");
+    QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
+    QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+    QFile t_fileAnnotationSet( QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+    FiffRawData rawData(t_fileRaw);
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
+
+    FiffCoordTrans mriHeadTrans(t_fileMriName); // mri <-> head transformation matrix
     //=============================================================================================================
+
+    //=============================================================================================================
+    // Setup GUI nd load average head
+    AbstractView::SPtr p3DAbstractView = AbstractView::SPtr(new AbstractView());
+    Data3DTreeModel::SPtr p3DDataModel = p3DAbstractView->getTreeModel();
+
+    QFile t_fileVVSensorSurfaceBEM(QCoreApplication::applicationDirPath() + "/resources/general/sensorSurfaces/306m.fif");
+    MNEBem t_sensorVVSurfaceBEM(t_fileVVSensorSurfaceBEM);
+    p3DDataModel->addMegSensorInfo("Device", "VectorView", QList<FiffChInfo>(), t_sensorVVSurfaceBEM);
+
+    QFile t_fileHeadAvr(QCoreApplication::applicationDirPath() + "/resources/general/hpiAlignment/fsaverage-head.fif");;
+    MNEBem t_BemHeadAvr(t_fileHeadAvr);
+    QPointer<DISP3DLIB::BemTreeItem> pBemHeadAvr = p3DDataModel->addBemData("Subject", "Average head", t_BemHeadAvr);
+
+
+    FiffDigPointSet digSet(t_fileRaw);
+    FiffDigPointSet digSetWithoutAdditional = digSet.pickTypes(QList<int>()<<FIFFV_POINT_HPI<<FIFFV_POINT_CARDINAL<<FIFFV_POINT_EEG);
+    QPointer<DISP3DLIB::DigitizerSetTreeItem> pTrackedDigitizer = p3DDataModel->addDigitizerData("Subject",
+                                                                                                 "Tracked Digitizers",
+                                                                                                 digSetWithoutAdditional);
+    alignFiducials(t_fileRaw.fileName(), pBemHeadAvr);
+
+    p3DAbstractView->show();
+    //=============================================================================================================
+
 
     //=============================================================================================================
     // Setup customisable values
@@ -118,8 +245,8 @@ int main(int argc, char *argv[])
 
     // HPI Fitting
     double dErrorMax = 0.10;                // maximum allowed estimation error
-    double dAllowedMovement = 0.3;          // maximum allowed movement
-    double dAllowedRotation = 0.5;          // maximum allowed rotation
+    double dAllowedMovement = 0.003;        // maximum allowed movement
+    double dAllowedRotation = 5;            // maximum allowed rotation
     bool bDoFastFit = true;                 // fast fit or advanced linear model
 
     //=============================================================================================================
@@ -177,7 +304,7 @@ int main(int argc, char *argv[])
     fitResult.devHeadTrans = pFiffInfo->dev_head_t;
     fitResult.devHeadTrans.from = 1;
     fitResult.devHeadTrans.to = 4;
-    FiffCoordTrans transDevHeadRef = pFiffInfo->dev_head_t;
+    FiffCoordTrans transDevHeadRef = pFiffInfo->dev_head_t;     // reference of last fit
     FiffCoordTrans transDevHeadFit = pFiffInfo->dev_head_t;
     // create HPI fit object
     HPIFit HPI = HPIFit(pFiffInfo,bDoFastFit);
@@ -217,7 +344,7 @@ int main(int argc, char *argv[])
         qInfo() << "HPI-Fit...";
         HPI.fitHPI(matData,
                    matProjectors,
-                   transDevHeadFit,
+                   fitResult.devHeadTrans,
                    vecFreqs,
                    fitResult.errorDistances,
                    fitResult.GoF,
@@ -231,20 +358,47 @@ int main(int argc, char *argv[])
         // update head position
         if(dMeanErrorDist < dErrorMax) {
             HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
-            fitResult.devHeadTrans = transDevHeadFit;
+
+            // update 3D view
+            p3DDataModel->addDigitizerData("Subject",
+                                             "Fitted Digitizers",
+                                             fitResult.fittedCoils.pickTypes(QList<int>()<<FIFFV_POINT_EEG));
+            //Update fast scan / tracked digitizer
+            QList<QStandardItem*> itemList = pTrackedDigitizer->findChildren(Data3DTreeModelItemTypes::DigitizerItem);
+            for(int j = 0; j < itemList.size(); ++j) {
+                if(DigitizerTreeItem* pDigItem = dynamic_cast<DigitizerTreeItem*>(itemList.at(j))) {
+                    // apply inverse to get from head to device space
+                    pDigItem->setTransform(fitResult.devHeadTrans, true);
+                }
+            }
+
+            // Update average head
+            itemList = pBemHeadAvr->findChildren(Data3DTreeModelItemTypes::BemSurfaceItem);
+            for(int j = 0; j < itemList.size(); ++j) {
+                if(BemSurfaceTreeItem* pBemItem = dynamic_cast<BemSurfaceTreeItem*>(itemList.at(j))) {
+                    pBemItem->setTransform(m_tAlignment);
+                    // apply inverse to get from head to device space
+                    pBemItem->applyTransform(fitResult.devHeadTrans, true);
+                }
+            }
+
             // check displacement
             dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
             dRotation = transDevHeadRef.angleTo(fitResult.devHeadTrans.trans);
-            qDebug() << dMovement;
+            qDebug() << dMovement*1000.0;
             qDebug() << dRotation;
             if(dMovement > dAllowedMovement || dRotation > dAllowedRotation) {
                 matPosition(i,9) = 1;
-                fitResult.bIsLargeHeadMovement = true;              // update head position
-                transDevHeadRef = fitResult.devHeadTrans;
+                fitResult.bIsLargeHeadMovement = true;
+                transDevHeadRef = fitResult.devHeadTrans;       // update reference head position
                 qDebug() << "big head movement";
             }
         }
 
+        // update Forward solution:
+
+
     }
     return a.exec();
 }
+
