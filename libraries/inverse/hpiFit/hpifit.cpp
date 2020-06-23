@@ -364,7 +364,7 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
 
 //=============================================================================================================
 
-void HPIFit::findOrder(const MatrixXd& t_mat,
+bool HPIFit::findOrder(const MatrixXd& t_mat,
                        const MatrixXd& t_matProjectors,
                        FiffCoordTrans& transDevHead,
                        QVector<int>& vecFreqs,
@@ -425,8 +425,10 @@ void HPIFit::findOrder(const MatrixXd& t_mat,
         vecFreqs = vecToOrder;
     } else {
         qWarning() << "HPIFit::findOrder: frequencie ordering went wrong";
+        return 0;
     }
     qInfo() << "HPIFit::findOrder: vecFreqs = " << vecFreqs;
+    return 1;
 }
 
 //=============================================================================================================

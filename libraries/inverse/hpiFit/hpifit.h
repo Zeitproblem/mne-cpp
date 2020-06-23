@@ -189,8 +189,10 @@ public:
      * @param[in]    vecGoF             The goodness of fit for each fitted HPI coil
      * @param[in]    fittedPointSet     The final fitted positions in form of a digitizer set.
      * @param[in]    pFiffInfo          Associated Fiff Information.
+     *
+     * @return  if succesfull or not
      */
-    void findOrder(const Eigen::MatrixXd& t_mat,
+    bool findOrder(const Eigen::MatrixXd& t_mat,
                    const Eigen::MatrixXd& t_matProjectors,
                    FIFFLIB::FiffCoordTrans &transDevHead,
                    QVector<int>& vecFreqs,
