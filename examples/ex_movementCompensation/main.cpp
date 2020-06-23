@@ -64,6 +64,10 @@
 #include <fs/annotationset.h>
 
 #include <disp/viewers/control3dview.h>
+#include <disp/viewers/butterflyview.h>
+#include <disp/viewers/helpers/evokedsetmodel.h>
+#include <disp/viewers/helpers/channelinfomodel.h>
+
 #include <disp3D/viewers/networkview.h>
 #include <disp3D/engine/model/items/network/networktreeitem.h>
 #include <disp3D/engine/model/items/sourcedata/mnedatatreeitem.h>
@@ -223,6 +227,17 @@ Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
     return matSparseProjMult;
 }
 
+FIFFLIB::FiffEvokedSet m_evokedSet;
+QStringList m_lResponsibleTriggerTypes;
+
+//=============================================================================================================
+
+void onNewEvokedSet(const FIFFLIB::FiffEvokedSet& evokedSet,
+                    const QStringList& lResponsibleTriggerTypes) {
+
+    m_lResponsibleTriggerTypes = lResponsibleTriggerTypes;
+    m_evokedSet = evokedSet;
+}
 
 //=============================================================================================================
 // MAIN
@@ -269,9 +284,12 @@ int main(int argc, char *argv[])
     FiffRawData rawMeas(t_fileMeasName);
     qDebug() << rawMeas.info.bads;
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
-    pFiffInfo->bads.append("MEG2641");
-//    QStringList lBads = rawMeas.info.bads;
-//    pFiffInfo->bads << lBads;
+
+    QStringList exclude;
+    exclude << rawData.info.bads << rawData.info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
+
+    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),true,false,QStringList(),exclude);
+
     double dSFreq = pFiffInfo->sfreq;
 
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
@@ -279,7 +297,7 @@ int main(int argc, char *argv[])
     //=============================================================================================================
 
     //=============================================================================================================
-    // Setup GUI nd load average head
+    // Setup GUI and load average head
     AbstractView::SPtr p3DAbstractView = AbstractView::SPtr(new AbstractView());
     Data3DTreeModel::SPtr p3DDataModel = p3DAbstractView->getTreeModel();
 
@@ -346,7 +364,14 @@ int main(int argc, char *argv[])
     QMap<QString,int>       mapThresholdsSecond;
     QMap<QString,double>    mapThresholds;
 
+    for(qint32 i = 0; i < pFiffInfo->chs.size(); ++i) {
+        if(pFiffInfo->chs[i].kind == FIFFV_STIM_CH) {
+            mapStimChsIndexNames.insert(pFiffInfo->chs[i].ch_name,i);
+        }
+    }
+
     QStringList lResponsibleTriggerTypes;
+    lResponsibleTriggerTypes << "3";
     QSharedPointer<RTPROCESSINGLIB::RtAve> pRtAve;
     bool bDoArtifactThresholdReduction = true;
     int iPreStimSamples = 0*dSFreq;
@@ -390,7 +415,6 @@ int main(int argc, char *argv[])
     pRtAve->setArtifactReduction(mapThresholds);
 
     FIFFLIB::FiffEvokedSet evokedSet;
-
 
     //=============================================================================================================
 
@@ -481,7 +505,7 @@ int main(int argc, char *argv[])
                                                               (double)dTransWidth/nyquistFrequency,
                                                               (double)dSFreq,
                                                               dMethod);
-//    RTPROCESSINGLIB::FilterKernel filterKernel;
+
     FilterIO::readFilter(sFilterPath, filterKernel);
 
     Eigen::RowVectorXi lFilterChannelList;
@@ -532,7 +556,6 @@ int main(int argc, char *argv[])
             qDebug() << "Coil frequencies ordered: " << vecFreqs;
         }
 
-        qInfo() << "HPI-Fit...";
         HPI.fitHPI(matData,
                    matSparseProjMult,
                    fitResult.devHeadTrans,
@@ -543,7 +566,7 @@ int main(int argc, char *argv[])
                    pFiffInfo,
                    bDoDebug,
                    sHPIResourceDir);
-        qInfo() << "[done]";
+
         // get error
         dMeanErrorDist = std::accumulate(fitResult.errorDistances.begin(), fitResult.errorDistances.end(), .0) / fitResult.errorDistances.size();
         // update head position
@@ -617,6 +640,11 @@ int main(int argc, char *argv[])
             }
         }
         pRtAve->append(matData);
+        QObject::connect(pRtAve.data(), &RtAve::evokedStim, onNewEvokedSet);
+        evokedSet = m_evokedSet;
+        lResponsibleTriggerTypes = m_lResponsibleTriggerTypes;
+
+        // source estimate
 
 
         // Write Data
