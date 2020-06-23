@@ -44,6 +44,8 @@
 #include <fiff/fiff_dig_point_set.h>
 #include <fiff/fiff_ch_info.h>
 #include <fiff/c/fiff_digitizer_data.h>
+#include <fiff/fiff_cov.h>
+#include <fiff/fiff_evoked_set.h>
 
 #include <inverse/hpiFit/hpifit.h>
 
@@ -80,6 +82,11 @@
 #include <mne/c/mne_surface_or_volume.h>
 #include <mne/mne_forwardsolution.h>
 
+#include <rtprocessing/filter.h>
+#include <rtprocessing/helpers/filterio.h>
+#include <rtprocessing/rtcov.h>
+#include <rtprocessing/rtave.h>
+
 //=============================================================================================================
 // QT INCLUDES
 //=============================================================================================================
@@ -111,6 +118,7 @@ using namespace DISP3DLIB;
 using namespace FSLIB;
 using namespace MNELIB;
 using namespace FWDLIB;
+using namespace RTPROCESSINGLIB;
 
 //=============================================================================================================
 // member variables
@@ -172,6 +180,49 @@ void alignFiducials(const QString& sFilePath, QPointer<DISP3DLIB::BemTreeItem> m
 
     delete pMneMshDisplaySurfaceSet;
 }
+//=============================================================================================================
+Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
+
+    // Use SSP + SGM + calibration
+    MatrixXd matProjectors = MatrixXd::Identity(infoTemp.chs.size(), infoTemp.chs.size());
+
+    //Turn on all SSP
+    for(int i = 0; i < infoTemp.projs.size(); ++i) {
+        infoTemp.projs[i].active = true;
+    }
+
+    //Create the projector for all SSP's on
+    infoTemp.make_projector(matProjectors);
+
+    qint32 nchan = infoTemp.nchan;
+    qint32 i, k;
+
+    typedef Eigen::Triplet<double> T;
+    std::vector<T> tripletList;
+    tripletList.reserve(nchan);
+
+    tripletList.clear();
+    tripletList.reserve(matProjectors.rows()*matProjectors.cols());
+    for(i = 0; i < matProjectors.rows(); ++i) {
+        for(k = 0; k < matProjectors.cols(); ++k) {
+            if(matProjectors(i,k) != 0) {
+                tripletList.push_back(T(i, k, matProjectors(i,k)));
+            }
+        }
+    }
+
+    //set columns of matrix to zero depending on bad channels indexes
+    for(qint32 j = 0; j < infoTemp.bads.size(); ++j) {
+        matProjectors.col(infoTemp.ch_names.indexOf(infoTemp.bads.at(j))).setZero();
+    }
+
+    Eigen::SparseMatrix<double> matSparseProjMult = SparseMatrix<double>(matProjectors.rows(),matProjectors.cols());
+    if(tripletList.size() > 0)
+        matSparseProjMult.setFromTriplets(tripletList.begin(), tripletList.end());
+
+    return matSparseProjMult;
+}
+
 
 //=============================================================================================================
 // MAIN
@@ -211,9 +262,17 @@ int main(int argc, char *argv[])
     QFile t_fileSrcName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-oct-6-src.fif");
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
 
+    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/filterBPF.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+
     FiffRawData rawData(t_fileRaw);
+    FiffRawData rawMeas(t_fileMeasName);
+    qDebug() << rawMeas.info.bads;
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
+    pFiffInfo->bads.append("MEG2641");
+//    QStringList lBads = rawMeas.info.bads;
+//    pFiffInfo->bads << lBads;
+    double dSFreq = pFiffInfo->sfreq;
 
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
     FiffCoordTrans mriHeadTrans(t_fileMriName); // mri <-> head transformation matrix
@@ -265,29 +324,75 @@ int main(int argc, char *argv[])
     fiff_int_t last = rawData.last_samp;
 
     int iN = ceil((last-first)/iQuantum);   // number of data segments
-    qDebug() << first << last << iN << iQuantum;
     MatrixXd vecTime = RowVectorXd::LinSpaced(iN, 0, iN-1)*iQuantum;
+
+    Eigen::SparseMatrix<double> matSparseProjMult = updateProjectors(*(pFiffInfo.data()));
     //=============================================================================================================
 
     //=============================================================================================================
-    // Use SSP + SGM + calibration
-    MatrixXd matProjectors = MatrixXd::Identity(pFiffInfo->chs.size(), pFiffInfo->chs.size());
+    // setup Covariance
+    int iEstimationSamples = 2000;
 
-    //Do a copy here because we are going to change the activity flags of the SSP's
-    FiffInfo infoTemp = *(pFiffInfo.data());
+    FiffCov fiffCov;
+    FiffCov fiffComputedCov;
 
-    //Turn on all SSP
-    for(int i = 0; i < infoTemp.projs.size(); ++i) {
-        infoTemp.projs[i].active = true;
+    RTPROCESSINGLIB::RtCov rtCov(pFiffInfo);
+    //=============================================================================================================
+
+    //=============================================================================================================
+    // setup averaging
+    QMap<QString,int>       mapStimChsIndexNames;
+    QMap<QString,double>    mapThresholdsFirst;
+    QMap<QString,int>       mapThresholdsSecond;
+    QMap<QString,double>    mapThresholds;
+
+    QStringList lResponsibleTriggerTypes;
+    QSharedPointer<RTPROCESSINGLIB::RtAve> pRtAve;
+    bool bDoArtifactThresholdReduction = true;
+    int iPreStimSamples = 0*dSFreq;
+    int iPostStimSamples = ((float)250/1000)*dSFreq;
+    int iBaselineFromSamples = ((float)0/1000)*dSFreq;
+    int iBaselineToSamples = ((float)210/1000)*dSFreq;
+    int iNumAverages = 10;
+    int iCurrentStimChIdx = mapStimChsIndexNames.value("STI001");
+    pRtAve = RtAve::SPtr::create(iNumAverages,
+                                 iPreStimSamples,
+                                 iPostStimSamples,
+                                 iBaselineFromSamples,
+                                 iBaselineToSamples,
+                                 iCurrentStimChIdx,
+                                 pFiffInfo);
+
+    pRtAve->setBaselineFrom(iBaselineFromSamples, iBaselineFromSamples/dSFreq);
+    pRtAve->setBaselineTo(iBaselineToSamples, iBaselineToSamples/dSFreq);
+    pRtAve->setBaselineActive(true);
+
+    if(bDoArtifactThresholdReduction) {
+        mapThresholds["Active"] = 1.0;
+    } else {
+        mapThresholds["Active"] = 0.0;
     }
 
-    //Create the projector for all SSP's on
-    infoTemp.make_projector(matProjectors);
+    mapThresholdsFirst["grad"] = 1.0;
+    mapThresholdsFirst["mag"] = 1.0;
+    mapThresholdsFirst["eeg"] = 1.0;
+    mapThresholdsFirst["ecg"] = 1.0;
+    mapThresholdsFirst["emg"] = 1.0;
+    mapThresholdsFirst["eog"] = 1.0;
 
-    //set columns of matrix to zero depending on bad channels indexes
-    for(qint32 j = 0; j < infoTemp.bads.size(); ++j) {
-        matProjectors.col(infoTemp.ch_names.indexOf(infoTemp.bads.at(j))).setZero();
-    }
+    mapThresholdsSecond["grad"] = -1;
+    mapThresholdsSecond["mag"] = -1;
+    mapThresholdsSecond["eeg"] = -1;
+    mapThresholdsSecond["ecg"] = -1;
+    mapThresholdsSecond["emg"] = -1;
+    mapThresholdsSecond["eog"] = -1;
+
+    pRtAve->setArtifactReduction(mapThresholds);
+
+    FIFFLIB::FiffEvokedSet evokedSet;
+
+
+    //=============================================================================================================
 
     //=============================================================================================================
     // setup informations for HPI fit (VectorView)
@@ -318,7 +423,7 @@ int main(int argc, char *argv[])
     //=============================================================================================================
 
     //=============================================================================================================
-    // setup Foeward solution
+    // setup Forward solution
     QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
 
     ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
@@ -348,12 +453,54 @@ int main(int argc, char *argv[])
     pComputeFwd->calculateFwd();
     pComputeFwd->storeFwd();
 
+    Eigen::MatrixXd defaultD;       // default cluster operator
+
     pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution, false, true));
-    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200)));
+    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200,defaultD,fiffComputedCov)));
 
     // ToDo Plot in right space
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
     QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
+
+    //=============================================================================================================
+    // setup Filter
+    double dFromFreq = 1.0;
+    double dToFreq = 40.0;
+    double dTransWidth = 0.1;
+    double dBw = dToFreq-dFromFreq;
+    double dCenter = dFromFreq+dBw/2.0;
+    double nyquistFrequency = dSFreq/2.0;
+    int iFilterTabs = 128;
+    FilterKernel::DesignMethod dMethod = FilterKernel::Cosine;
+    QScopedPointer<RTPROCESSINGLIB::Filter> pRtFilter(new RTPROCESSINGLIB::Filter());
+    RTPROCESSINGLIB::FilterKernel filterKernel = FilterKernel("Designed Filter",
+                                                              FilterKernel::BPF,
+                                                              iFilterTabs,
+                                                              (double)dCenter/nyquistFrequency,
+                                                              (double)dBw/nyquistFrequency,
+                                                              (double)dTransWidth/nyquistFrequency,
+                                                              (double)dSFreq,
+                                                              dMethod);
+//    RTPROCESSINGLIB::FilterKernel filterKernel;
+    FilterIO::readFilter(sFilterPath, filterKernel);
+
+    Eigen::RowVectorXi lFilterChannelList;
+    for(int i = 0; i < pFiffInfo->chs.size(); ++i) {
+        if((pFiffInfo->chs.at(i).kind == FIFFV_MEG_CH || pFiffInfo->chs.at(i).kind == FIFFV_EEG_CH ||
+            pFiffInfo->chs.at(i).kind == FIFFV_EOG_CH || pFiffInfo->chs.at(i).kind == FIFFV_ECG_CH ||
+            pFiffInfo->chs.at(i).kind == FIFFV_EMG_CH)/* && !pFiffInfo->bads.contains(pFiffInfo->chs.at(i).ch_name)*/) {
+
+            lFilterChannelList.conservativeResize(lFilterChannelList.cols() + 1);
+            lFilterChannelList[lFilterChannelList.cols()-1] = i;
+        }
+    }
+    //=============================================================================================================
+    // prepare writing
+    RowVectorXd cals;
+    QFile t_fileOut(QCoreApplication::applicationDirPath() + "/MNE-sample-data/test_filter_raw.fif");
+    FiffStream::SPtr outfid = FiffStream::start_writing_raw(t_fileOut, rawData.info,cals);
+    MatrixXd matResultFiltered(lFilterChannelList.size(),last-first);
+    bool first_buffer = true;
 
     //=============================================================================================================
     // actual pipeline
@@ -374,7 +521,7 @@ int main(int argc, char *argv[])
             while(!bSorted) {
                 qDebug() << "order coils";
                 bSorted = HPI.findOrder(matData,
-                                        matProjectors,
+                                        matSparseProjMult,
                                         transDevHeadFit,
                                         vecFreqs,
                                         fitResult.errorDistances,
@@ -387,7 +534,7 @@ int main(int argc, char *argv[])
 
         qInfo() << "HPI-Fit...";
         HPI.fitHPI(matData,
-                   matProjectors,
+                   matSparseProjMult,
                    fitResult.devHeadTrans,
                    vecFreqs,
                    fitResult.errorDistances,
@@ -429,13 +576,10 @@ int main(int argc, char *argv[])
             // check displacement
             dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
             dRotation = transDevHeadRef.angleTo(fitResult.devHeadTrans.trans);
-            qDebug() << dMovement*1000.0;
-            qDebug() << dRotation;
             if(dMovement > dAllowedMovement || dRotation > dAllowedRotation) {
                 matPosition(i,9) = 1;
                 fitResult.bIsLargeHeadMovement = true;
                 transDevHeadRef = fitResult.devHeadTrans;       // update reference head position
-                qDebug() << "big head movement";
             } else {
                 fitResult.bIsLargeHeadMovement = false;
             }
@@ -447,11 +591,47 @@ int main(int argc, char *argv[])
 //            pComputeFwd->updateHeadPos(&transMegHeadOld);
 //            pFwdSolution->sol = pComputeFwd->sol;
 //            pFwdSolution->sol_grad = pComputeFwd->sol_grad;
-//            pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200)));
+//            pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
 //        }
 
-    }
+        // Filtering
+        matData = matSparseProjMult * matData;
+        QList<FilterKernel> list;
+        list << filterKernel;
+        matData = pRtFilter->filterData(matData,
+                                        list,
+                                        lFilterChannelList);
 
+        // Covariance
+        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);
+        if(!fiffCov.names.isEmpty()) {
+            fiffComputedCov = fiffCov;
+            qDebug() << "Covariance updated";
+        }
+
+        // averaging
+        // Init the stim channels
+        for(qint32 i = 0; i < pFiffInfo->chs.size(); ++i) {
+            if(pFiffInfo->chs[i].kind == FIFFV_STIM_CH) {
+                mapStimChsIndexNames.insert(pFiffInfo->chs[i].ch_name,i);
+            }
+        }
+        pRtAve->append(matData);
+
+
+        // Write Data
+        if(first_buffer) {
+            if(first > 0) {
+                outfid->write_int(FIFF_FIRST_SAMPLE, &first);
+            }
+            first_buffer = false;
+        }
+        outfid->write_raw_buffer(matData,cals);
+
+
+
+    }
+    outfid->finish_writing_raw();
+    qDebug() << "Done";
     return a.exec();
 }
-
