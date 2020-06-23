@@ -1,9 +1,9 @@
-//=============================================================================================================
+﻿//=============================================================================================================
 /**
  * @file     main.cpp
  * @author   Ruben Dörfel <doerfelruben@aol.com>
  * @since    0.1.0
- * @date     06, 2020
+ * @date     June, 2020
  *
  * @section  LICENSE
  *
@@ -48,6 +48,7 @@
 #include <fiff/fiff_evoked_set.h>
 
 #include <inverse/hpiFit/hpifit.h>
+#include <inverse/minimumNorm/minimumnorm.h>
 
 #include <utils/ioutils.h>
 #include <utils/generics/applicationlogger.h>
@@ -67,8 +68,10 @@
 #include <disp/viewers/butterflyview.h>
 #include <disp/viewers/helpers/evokedsetmodel.h>
 #include <disp/viewers/helpers/channelinfomodel.h>
+#include <disp/plots/imagesc.h>
 
 #include <disp3D/viewers/networkview.h>
+#include <disp/viewers/minimumnormsettingsview.h>
 #include <disp3D/engine/model/items/network/networktreeitem.h>
 #include <disp3D/engine/model/items/sourcedata/mnedatatreeitem.h>
 #include <disp3D/engine/model/items/sensorspace/sensorsettreeitem.h>
@@ -85,11 +88,13 @@
 #include <mne/c/mne_msh_display_surface_set.h>
 #include <mne/c/mne_surface_or_volume.h>
 #include <mne/mne_forwardsolution.h>
+#include <mne/mne_sourceestimate.h>
 
 #include <rtprocessing/filter.h>
 #include <rtprocessing/helpers/filterio.h>
 #include <rtprocessing/rtcov.h>
 #include <rtprocessing/rtave.h>
+#include <rtprocessing/rtinvop.h>
 
 //=============================================================================================================
 // QT INCLUDES
@@ -271,6 +276,7 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // Load data
+
     QFile t_fileRaw(QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
     QFile t_fileMriName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/all-trans.fif");
     QFile t_fileBemName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-5120-5120-5120-bem.fif");
@@ -279,25 +285,29 @@ int main(int argc, char *argv[])
 
     QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/filterBPF.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+    QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
 
     FiffRawData rawData(t_fileRaw);
     FiffRawData rawMeas(t_fileMeasName);
-    qDebug() << rawMeas.info.bads;
+
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
 
     QStringList exclude;
     exclude << rawData.info.bads << rawData.info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
 
-    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),true,false,QStringList(),exclude);
+//    // only compute on grad and meg
+//    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+//    FiffInfo::SPtr pFiffInfoCompute = QSharedPointer<FiffInfo>(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
+//    QStringList pickedChannels = pFiffInfoCompute->ch_names;
 
     double dSFreq = pFiffInfo->sfreq;
 
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
     FiffCoordTrans mriHeadTrans(t_fileMriName); // mri <-> head transformation matrix
-    //=============================================================================================================
 
     //=============================================================================================================
     // Setup GUI and load average head
+
     AbstractView::SPtr p3DAbstractView = AbstractView::SPtr(new AbstractView());
     Data3DTreeModel::SPtr p3DDataModel = p3DAbstractView->getTreeModel();
 
@@ -318,12 +328,11 @@ int main(int argc, char *argv[])
     alignFiducials(t_fileRaw.fileName(), pBemHeadAvr);
 
     p3DAbstractView->show();
-    //=============================================================================================================
-
 
     //=============================================================================================================
     // Setup customisable values
     // Data Stream
+
     fiff_int_t iQuantum = 200;              // Buffer size
 
     // HPI Fitting
@@ -334,6 +343,7 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // setup data stream
+
     MatrixXd matData, matTimes;
     MatrixXd matPosition;                   // matPosition matrix to save quaternions etc.
 
@@ -345,20 +355,20 @@ int main(int argc, char *argv[])
     MatrixXd vecTime = RowVectorXd::LinSpaced(iN, 0, iN-1)*iQuantum;
 
     Eigen::SparseMatrix<double> matSparseProjMult = updateProjectors(*(pFiffInfo.data()));
-    //=============================================================================================================
 
     //=============================================================================================================
     // setup Covariance
+
     int iEstimationSamples = 2000;
 
     FiffCov fiffCov;
     FiffCov fiffComputedCov;
 
     RTPROCESSINGLIB::RtCov rtCov(pFiffInfo);
-    //=============================================================================================================
 
     //=============================================================================================================
     // setup averaging
+
     QMap<QString,int>       mapStimChsIndexNames;
     QMap<QString,double>    mapThresholdsFirst;
     QMap<QString,int>       mapThresholdsSecond;
@@ -372,7 +382,7 @@ int main(int argc, char *argv[])
 
     QStringList lResponsibleTriggerTypes;
     lResponsibleTriggerTypes << "3";
-    QSharedPointer<RTPROCESSINGLIB::RtAve> pRtAve;
+
     bool bDoArtifactThresholdReduction = true;
     int iPreStimSamples = 0*dSFreq;
     int iPostStimSamples = ((float)250/1000)*dSFreq;
@@ -380,6 +390,8 @@ int main(int argc, char *argv[])
     int iBaselineToSamples = ((float)210/1000)*dSFreq;
     int iNumAverages = 10;
     int iCurrentStimChIdx = mapStimChsIndexNames.value("STI001");
+
+    QSharedPointer<RTPROCESSINGLIB::RtAve> pRtAve;
     pRtAve = RtAve::SPtr::create(iNumAverages,
                                  iPreStimSamples,
                                  iPostStimSamples,
@@ -417,9 +429,8 @@ int main(int argc, char *argv[])
     FIFFLIB::FiffEvokedSet evokedSet;
 
     //=============================================================================================================
-
-    //=============================================================================================================
     // setup informations for HPI fit (VectorView)
+
     QVector<int> vecFreqs {154,161,158,166};
     bool bSorted = false;
     QVector<double> vecError;
@@ -445,9 +456,8 @@ int main(int argc, char *argv[])
     HPIFit HPI = HPIFit(pFiffInfo,bDoFastFit);
 
     //=============================================================================================================
-
-    //=============================================================================================================
     // setup Forward solution
+
     QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
 
     ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
@@ -482,9 +492,36 @@ int main(int argc, char *argv[])
     pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution, false, true));
     pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200,defaultD,fiffComputedCov)));
 
-    // ToDo Plot in right space
+    // ToDo Plot in head space
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
     QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
+
+
+    //=============================================================================================================
+
+    // setup MNE source estimate
+
+    QString sAvrType = "3";
+    QString sMethod = "dSPM";
+    SurfaceSet::SPtr pSurfaceSet = SurfaceSet::SPtr(new SurfaceSet(sSurfaceDir+"/lh.orig", sSurfaceDir+"/rh.orig"));
+    RtInvOp::SPtr pRtInvOp = RtInvOp::SPtr(new RtInvOp(pFiffInfo, pFwdSolution));
+    MNELIB::MNEInverseOperator invOp;
+    FiffEvoked currentEvoked;
+
+    qint32 skip_count = 0;
+    FiffEvoked evoked;
+    MatrixXd matDataResized;
+    qint32 j;
+    int iTimePointSps = 0.187*dSFreq;
+    int iNumberChannels = 0;
+    int iDownSample = 1;
+    float tstep = 1 / dSFreq;
+    float lambda2 = 1.0f / pow(1.0f, 2); //ToDo estimate lambda using covariance
+    MNESourceEstimate sourceEstimate;
+    bool bUpdateMinimumNorm = false;
+    QSharedPointer<INVERSELIB::MinimumNorm> pMinimumNorm;
+    QStringList lChNamesFiffInfo;
+    QStringList lChNamesInvOp;
 
     //=============================================================================================================
     // setup Filter
@@ -615,7 +652,9 @@ int main(int argc, char *argv[])
 //            pFwdSolution->sol = pComputeFwd->sol;
 //            pFwdSolution->sol_grad = pComputeFwd->sol_grad;
 //            pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
-//        }
+//            pRtInvOp->setFwdSolution(pFwdSolution);
+//            pRtInvOp->append(fiffComputedCov);
+        //        }
 
         // Filtering
         matData = matSparseProjMult * matData;
@@ -629,6 +668,8 @@ int main(int argc, char *argv[])
         fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);
         if(!fiffCov.names.isEmpty()) {
             fiffComputedCov = fiffCov;
+            qDebug() << "adg";
+            pRtInvOp->append(fiffComputedCov);
             qDebug() << "Covariance updated";
         }
 
@@ -640,11 +681,64 @@ int main(int argc, char *argv[])
             }
         }
         pRtAve->append(matData);
+        qDebug() << "oha" ;
         QObject::connect(pRtAve.data(), &RtAve::evokedStim, onNewEvokedSet);
         evokedSet = m_evokedSet;
         lResponsibleTriggerTypes = m_lResponsibleTriggerTypes;
 
+        if(evokedSet.evoked.at(0).nave > 0) {
+            currentEvoked = evokedSet.evoked.at(0);
+            DISPLIB::ImageSc imagesc(currentEvoked.data);
+            imagesc.setTitle("Data ImageSc");
+            imagesc.setXLabel("X Axes");
+            imagesc.setYLabel("Y Axes");
+            imagesc.setColorMap("Hot");//imagesc.setColorMap("Jet");//imagesc.setColorMap("RedBlue");//imagesc.setColorMap("Bone");//imagesc.setColorMap("Jet");//imagesc.setColorMap("Hot");
+            imagesc.show();
+        }
+
+
         // source estimate
+        FiffEvokedSet::SPtr pFiffEvokedSet = FiffEvokedSet::SPtr(new FiffEvokedSet(evokedSet));
+
+//        iNumberChannels = invOp.noise_cov->names.size();
+//        lChNamesFiffInfo = pickedChannels;
+//        lChNamesInvOp = invOp.noise_cov->names;
+
+//        if(bUpdateMinimumNorm) {
+//            qDebug() << "hier?";
+//            pMinimumNorm = MinimumNorm::SPtr(new MinimumNorm(invOp, lambda2, sMethod));
+//            bUpdateMinimumNorm = false;
+//            // Set up the inverse according to the parameters.
+//            // Use 1 nave here because in case of evoked data as input the minimum norm will always be updated when the source estimate is calculated (see run method).
+//            pMinimumNorm->doInverseSetup(1,true);
+//        }
+
+//        for(int i = 0; i < pFiffEvokedSet->evoked.size(); ++i) {
+//            qDebug() << "oder hier?";
+//            if(pFiffEvokedSet->evoked.at(i).comment == sAvrType) {
+//                // Get the current evoked data
+//                qDebug() << "a";
+//                currentEvoked = pFiffEvokedSet->evoked.at(i).pick_channels(pickedChannels);
+//                qDebug() << "a2";
+//                sourceEstimate = pMinimumNorm->calculateInverse(currentEvoked);
+
+//                if(((skip_count % iDownSample) == 0)) {
+//                    qDebug() << "b";
+//                    sourceEstimate = pMinimumNorm->calculateInverse(currentEvoked);
+//                    qDebug() << "c";
+//                    if(!sourceEstimate.isEmpty()) {
+//                        if(iTimePointSps < sourceEstimate.data.cols() && iTimePointSps >= 0) {
+//                            qDebug() << "d";
+//                            sourceEstimate = sourceEstimate.reduce(iTimePointSps,1);
+//                            std::cout << sourceEstimate.data << std::endl;
+//                        }
+//                    }
+//                }
+
+//                ++skip_count;
+
+//            }
+//        }
 
 
         // Write Data
