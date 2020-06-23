@@ -52,6 +52,8 @@
 #include <utils/mnemath.h>
 
 #include <fwd/fwd_coil_set.h>
+#include <fwd/computeFwd/compute_fwd.h>
+#include <fwd/computeFwd/compute_fwd_settings.h>
 
 #include <disp3D/viewers/abstractview.h>
 #include <disp3D/engine/model/data3Dtreemodel.h>
@@ -76,6 +78,7 @@
 
 #include <mne/c/mne_msh_display_surface_set.h>
 #include <mne/c/mne_surface_or_volume.h>
+#include <mne/mne_forwardsolution.h>
 
 //=============================================================================================================
 // QT INCLUDES
@@ -107,6 +110,7 @@ using namespace Eigen;
 using namespace DISP3DLIB;
 using namespace FSLIB;
 using namespace MNELIB;
+using namespace FWDLIB;
 
 //=============================================================================================================
 // member variables
@@ -193,8 +197,9 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
 
     QCommandLineOption parameterOption("parameter", "The first parameter description.");
+    QCommandLineOption computeOption("compute", "Weather to compute or not.", "bool", "false");
 
-    parser.addOption(parameterOption);
+    parser.addOption(computeOption);
 
     parser.process(a);
 
@@ -205,11 +210,12 @@ int main(int argc, char *argv[])
     QFile t_fileBemName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-5120-5120-5120-bem.fif");
     QFile t_fileSrcName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-oct-6-src.fif");
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
-    QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
-    QFile t_fileAnnotationSet( QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+
+    QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     FiffRawData rawData(t_fileRaw);
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
 
+    AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
     FiffCoordTrans mriHeadTrans(t_fileMriName); // mri <-> head transformation matrix
     //=============================================================================================================
 
@@ -308,11 +314,49 @@ int main(int argc, char *argv[])
     FiffCoordTrans transDevHeadFit = pFiffInfo->dev_head_t;
     // create HPI fit object
     HPIFit HPI = HPIFit(pFiffInfo,bDoFastFit);
+
     //=============================================================================================================
+
+    //=============================================================================================================
+    // setup Foeward solution
+    QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
+
+    ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
+    pFwdSettings->solname = QCoreApplication::applicationDirPath() + "/MNE-sample-data/your-solution-fwd.fif";
+    pFwdSettings->mriname = t_fileMriName.fileName();
+    pFwdSettings->bemname = t_fileBemName.fileName();
+    pFwdSettings->srcname = t_fileSrcName.fileName();
+    pFwdSettings->measname = t_fileMeasName.fileName();
+    pFwdSettings->transname.clear();
+    pFwdSettings->eeg_model_name = "Default";
+    pFwdSettings->include_meg = true;
+    pFwdSettings->include_eeg = true;
+    pFwdSettings->accurate = true;
+    pFwdSettings->mindist = 5.0f/1000.0f;
+    pFwdSettings->pFiffInfo = pFiffInfo;
+
+    FiffCoordTransOld transMegHeadOld = fitResult.devHeadTrans.toOld();
+    QFile t_fSolution(pFwdSettings->solname);
+
+    MNEForwardSolution::SPtr pFwdSolution;
+    MNEForwardSolution::SPtr pClusteredFwd;
+
+    // init Forward solution
+    ComputeFwd::SPtr pComputeFwd = ComputeFwd::SPtr(new ComputeFwd(pFwdSettings));
+
+    // compute and store first forward solution
+    pComputeFwd->calculateFwd();
+    pComputeFwd->storeFwd();
+
+    pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution, false, true));
+    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200)));
+
+    // ToDo Plot in right space
+    QList<SourceSpaceTreeItem*> pSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
+    QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
 
     //=============================================================================================================
     // actual pipeline
-
     for(int i = 0; i < vecTime.size(); i++) {
         from = first + vecTime(i);
         to = from + iQuantum;
@@ -392,13 +436,22 @@ int main(int argc, char *argv[])
                 fitResult.bIsLargeHeadMovement = true;
                 transDevHeadRef = fitResult.devHeadTrans;       // update reference head position
                 qDebug() << "big head movement";
+            } else {
+                fitResult.bIsLargeHeadMovement = false;
             }
         }
 
         // update Forward solution:
-
+//        if(fitResult.bIsLargeHeadMovement) {
+//            transMegHeadOld = fitResult.devHeadTrans.toOld();
+//            pComputeFwd->updateHeadPos(&transMegHeadOld);
+//            pFwdSolution->sol = pComputeFwd->sol;
+//            pFwdSolution->sol_grad = pComputeFwd->sol_grad;
+//            pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200)));
+//        }
 
     }
+
     return a.exec();
 }
 
