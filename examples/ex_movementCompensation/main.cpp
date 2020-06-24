@@ -398,15 +398,81 @@ int main(int argc, char *argv[])
 
     // Command Line Parser
     QCommandLineParser parser;
-    parser.setApplicationDescription("Example name");
+    parser.setApplicationDescription("Evaluation for movement compensation");
     parser.addHelpOption();
 
-    QCommandLineOption parameterOption("parameter", "The first parameter description.");
-    QCommandLineOption computeOption("compute", "Weather to compute or not.", "bool", "false");
+    QCommandLineOption writeOption("write", "Write the filtered data to .fif.", "bool", "false");
+    QCommandLineOption moveCompOption("movComp", "Perform head position updates", "bool", "false");
+    QCommandLineOption fastFitOption("fastFit", "Do fast HPI fits.", "bool", "true");
+    QCommandLineOption maxMoveOption("maxMove", "Maximum head movement in mm.", "value", "3");
+    QCommandLineOption maxRotOption("maxRot", "Maximum head rotation in degree.", "value", "5");
+    QCommandLineOption coilTypeOption("coilType", "The coil <type> (for sensor level usage only), i.e. 'grad' or 'mag'.", "type", "grad");
+    QCommandLineOption clustOption("doClust", "Do clustering of source space (for source level usage only).", "doClust", "true");
+    QCommandLineOption sourceLocMethodOption("sourceLocMethod", "Inverse estimation <method> (for source level usage only), i.e., 'MNE', 'dSPM' or 'sLORETA'.", "method", "dSPM");
+    QCommandLineOption rawFileOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
 
-    parser.addOption(computeOption);
+    parser.addOption(writeOption);
+    parser.addOption(moveCompOption);
+    parser.addOption(fastFitOption);
+    parser.addOption(maxMoveOption);
+    parser.addOption(maxRotOption);
+    parser.addOption(coilTypeOption);
+    parser.addOption(clustOption);
+    parser.addOption(sourceLocMethodOption);
+    parser.addOption(rawFileOption);
 
     parser.process(a);
+
+
+
+    //=============================================================================================================
+    // Setup customisable values
+
+    // Data Stream
+    fiff_int_t iQuantum = 200;              // Buffer size
+    bool bWriteFilteredData = false;        // write filtered data to .fif
+
+    // HPI Fitting
+    double dErrorMax = 0.10;                // maximum allowed estimation error
+    //    double dAllowedMovement = 0.003;        // maximum allowed movement
+    //    double dAllowedRotation = 5;            // maximum allowed rotation
+    bool bDoFastFit = true;                 // fast fit or advanced linear model
+
+    // Forward Solution#
+    bool bDoHeadPosUpdate = false;
+    bool bDoCluster = true;
+
+    // Noise Covariance
+    int iEstimationSamples = 2000;
+
+    // Source estimation
+    //    QString sMethod = "dSPM";               // source estimation method "MNE" "dSPM" "sLORETA"
+
+    // Init from arguments
+    QString sCoilType = parser.value(coilTypeOption);
+    QString sMethod = parser.value(sourceLocMethodOption);
+    QString sRaw = parser.value(rawFileOption);
+    float dAllowedMovement = parser.value(maxMoveOption).toFloat()/1000.0;
+    float dAllowedRotation = parser.value(maxRotOption).toFloat();
+
+    if(parser.value(moveCompOption) == "false" || parser.value(moveCompOption) == "0") {
+        bDoHeadPosUpdate = false;
+    } else if(parser.value(moveCompOption) == "true" || parser.value(moveCompOption) == "1") {
+        bDoHeadPosUpdate = true;
+    }
+
+    if(parser.value(fastFitOption) == "false" || parser.value(fastFitOption) == "0") {
+        bDoFastFit = false;
+    } else if(parser.value(fastFitOption) == "true" || parser.value(fastFitOption) == "1") {
+        bDoFastFit = true;
+    }
+
+    if(parser.value(writeOption) == "false" || parser.value(writeOption) == "0") {
+        bWriteFilteredData = false;
+    } else if(parser.value(writeOption) == "true" || parser.value(writeOption) == "1") {
+        bWriteFilteredData = true;
+    }
+
 
     //=============================================================================================================
     // Load data
@@ -477,28 +543,6 @@ int main(int argc, char *argv[])
 //    m_pButterflyView->setChannelInfoModel(m_pChannelInfoModel);
 //    m_pButterflyView->dataUpdate();
 //    m_pButterflyView->updateView();
-
-    //=============================================================================================================
-    // Setup customisable values
-
-    // Data Stream
-    fiff_int_t iQuantum = 200;              // Buffer size
-    bool bWriteFilteredData = false;        // write filtered data to .fif
-
-    // HPI Fitting
-    double dErrorMax = 0.10;                // maximum allowed estimation error
-    double dAllowedMovement = 0.003;        // maximum allowed movement
-    double dAllowedRotation = 5;            // maximum allowed rotation
-    bool bDoFastFit = true;                 // fast fit or advanced linear model
-
-    // Forward Solution#
-    bool bDoHeadPosUpdate = false;
-
-    // Noise Covariance
-    int iEstimationSamples = 2000;
-
-    // Source estimation
-    QString sMethod = "dSPM";               // source estimation method "MNE" "dSPM" "sLORETA"
 
     //=============================================================================================================
     // setup data stream
@@ -708,6 +752,8 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // actual pipeline
 
+    QElapsedTimer timer;
+    timer.start();
     for(int i = 0; i < vecTime.size(); i++) {
         from = first + vecTime(i);
         to = from + iQuantum;
@@ -781,11 +827,13 @@ int main(int argc, char *argv[])
                 // cluster
                 pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
                 forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
-                invOp = MNEInverseOperator(*pFiffInfo.data(),                   // create new inverse operator
+                if(!fiffComputedCov.isEmpty()) {
+                invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
                                            forwardMeg,
                                            fiffComputedCov,
                                            0.2f,
                                            0.8f);
+                }
                 m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
 //                pRtInvOp->setFwdSolution(pFwdSolution);
 //                pRtInvOp->append(fiffComputedCov);
@@ -876,6 +924,6 @@ int main(int argc, char *argv[])
 
     p3DAbstractView->show();
     qDebug() << "Done";
-
+    qDebug() << timer.elapsed();
     return a.exec();;
 }
