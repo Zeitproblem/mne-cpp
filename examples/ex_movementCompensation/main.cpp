@@ -480,15 +480,25 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // Setup customisable values
-    // Data Stream
 
+    // Data Stream
     fiff_int_t iQuantum = 200;              // Buffer size
+    bool bWriteFilteredData = false;        // write filtered data to .fif
 
     // HPI Fitting
     double dErrorMax = 0.10;                // maximum allowed estimation error
     double dAllowedMovement = 0.003;        // maximum allowed movement
     double dAllowedRotation = 5;            // maximum allowed rotation
     bool bDoFastFit = true;                 // fast fit or advanced linear model
+
+    // Forward Solution#
+    bool bDoHeadPosUpdate = false;
+
+    // Noise Covariance
+    int iEstimationSamples = 2000;
+
+    // Source estimation
+    QString sMethod = "dSPM";               // source estimation method "MNE" "dSPM" "sLORETA"
 
     //=============================================================================================================
     // setup data stream
@@ -508,8 +518,6 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup Covariance
 
-    int iEstimationSamples = 2000;
-
     FiffCov fiffCov;
     FiffCov fiffComputedCov;
 
@@ -518,14 +526,7 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup averaging
 
-    QMap<QString,double> mapReject;
-    mapReject.insert("eog", 100e-06);
-    mapReject.insert("grad", 3000e-13);
-    mapReject.insert("mag", 3.5e-12);
-
     QMap<QString,int>       mapStimChsIndexNames;
-    QMap<QString,double>    mapThresholdsFirst;
-    QMap<QString,int>       mapThresholdsSecond;
     QMap<QString,double>    mapThresholds;
 
     for(qint32 i = 0; i < pFiffInfo->chs.size(); ++i) {
@@ -565,20 +566,6 @@ int main(int argc, char *argv[])
         mapThresholds["Active"] = 0.0;
     }
 
-    mapThresholdsFirst["grad"] = 1.0;
-    mapThresholdsFirst["mag"] = 1.0;
-    mapThresholdsFirst["eeg"] = 1.0;
-    mapThresholdsFirst["ecg"] = 1.0;
-    mapThresholdsFirst["emg"] = 1.0;
-    mapThresholdsFirst["eog"] = 1.0;
-
-    mapThresholdsSecond["grad"] = -1;
-    mapThresholdsSecond["mag"] = -1;
-    mapThresholdsSecond["eeg"] = -1;
-    mapThresholdsSecond["ecg"] = -1;
-    mapThresholdsSecond["emg"] = -1;
-    mapThresholdsSecond["eog"] = -1;
-
     pRtAve->setArtifactReduction(mapThresholds);
 
     FIFFLIB::FiffEvokedSet evokedSet;
@@ -612,8 +599,6 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // setup Forward solution
-
-    bool bDoHeadPosUpdate = false;
 
     QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
 
@@ -656,17 +641,14 @@ int main(int argc, char *argv[])
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
     QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
 
-
     //=============================================================================================================
     // setup MNE source estimate
 
     QString sAvrType = "3";
-    QString sMethod = "dSPM";
     RtInvOp::SPtr pRtInvOp = RtInvOp::SPtr(new RtInvOp(pFiffInfoCompute, pFwdSolution));
     MNELIB::MNEInverseOperator invOp;
     FiffEvoked currentEvoked;
 
-    qint32 skip_count = 0;
     FiffEvoked evoked;
     MatrixXd matDataResized;
     qint32 j;
@@ -725,6 +707,7 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // actual pipeline
+
     for(int i = 0; i < vecTime.size(); i++) {
         from = first + vecTime(i);
         to = from + iQuantum;
@@ -738,6 +721,7 @@ int main(int argc, char *argv[])
             return -1;
         }
 
+        // coil ordering
         if(!bSorted) {
             while(!bSorted) {
                 qDebug() << "order coils";
@@ -753,6 +737,7 @@ int main(int argc, char *argv[])
             qDebug() << "Coil frequencies ordered: " << vecFreqs;
         }
 
+        // HPI fit
         HPI.fitHPI(matData,
                    matSparseProjMult,
                    fitResult.devHeadTrans,
@@ -764,16 +749,17 @@ int main(int argc, char *argv[])
                    bDoDebug,
                    sHPIResourceDir);
 
-        // get error
+        // get mean estimation error
         dMeanErrorDist = std::accumulate(fitResult.errorDistances.begin(), fitResult.errorDistances.end(), .0) / fitResult.errorDistances.size();
-        // update head position
+
+        // update head position if good fit
         if(dMeanErrorDist < dErrorMax) {
             HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
 
-            // update 3D View
+            // update 3D View (not working yet)
             update3DView(fitResult);
 
-            // check displacement
+            // check for big head movement
             dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
             dRotation = transDevHeadRef.angleTo(fitResult.devHeadTrans.trans);
             if(dMovement > dAllowedMovement || dRotation > dAllowedRotation) {
@@ -785,21 +771,22 @@ int main(int argc, char *argv[])
             }
         }
 
-        // update Forward solution:
+        // update Forward solution
         if(bDoHeadPosUpdate) {
             if(fitResult.bIsLargeHeadMovement) {
                 transMegHeadOld = fitResult.devHeadTrans.toOld();
-                pComputeFwd->updateHeadPos(&transMegHeadOld);
-                pFwdSolution->sol = pComputeFwd->sol;
+                pComputeFwd->updateHeadPos(&transMegHeadOld);           // update
+                pFwdSolution->sol = pComputeFwd->sol;                   // store results
                 pFwdSolution->sol_grad = pComputeFwd->sol_grad;
+                // cluster
                 pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
-                forwardMeg = pClusteredFwd->pick_types(true, false);
-                invOp = MNEInverseOperator(*pFiffInfo.data(),
+                forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
+                invOp = MNEInverseOperator(*pFiffInfo.data(),                   // create new inverse operator
                                            forwardMeg,
                                            fiffComputedCov,
                                            0.2f,
                                            0.8f);
-                m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));
+                m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
 //                pRtInvOp->setFwdSolution(pFwdSolution);
 //                pRtInvOp->append(fiffComputedCov);
             }
@@ -814,12 +801,12 @@ int main(int argc, char *argv[])
                                         lFilterChannelList);
 
         // Covariance
-        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);
+        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);        // updates once iEstimationSamples is exceeded
         if(!fiffCov.names.isEmpty()) {
             fiffComputedCov = fiffCov;
 //            pRtInvOp->append(fiffComputedCov);
             m_qListCovChNames = fiffComputedCov.names;
-            invOp = MNEInverseOperator(*pFiffInfoCompute.data(),
+            invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                // create new inverse operator
                                        forwardMeg,
                                        fiffComputedCov,
                                        0.2f,
@@ -839,13 +826,14 @@ int main(int argc, char *argv[])
         evokedSet = m_evokedSet;
         lResponsibleTriggerTypes = m_lResponsibleTriggerTypes;
 
+        // source estimate
         if(evokedSet.evoked.size()>0 && !fiffComputedCov.names.isEmpty()) {
-
+            // only if evoked and noise cov
             currentEvoked = evokedSet.evoked.at(0);
             FiffEvoked megEvoked = currentEvoked.pick_channels(pickedChannels);
             m_pFiffInfoInput = QSharedPointer<FiffInfo>(new FiffInfo(megEvoked.info));
 
-            calcFiffInfo();
+            calcFiffInfo();     // prepare fiff info from different objects (ToDo: only do once)
 
             // IOUtils::write_eigen_matrix(megEvoked.data, QCoreApplication::applicationDirPath() + "/MNE-sample-data/result.txt");
 
@@ -856,67 +844,23 @@ int main(int argc, char *argv[])
                 qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
             }
         }
-
-        // source estimate
-
-//        iNumberChannels = invOp.noise_cov->names.size();
-//        lChNamesFiffInfo = pickedChannels;
-//        lChNamesInvOp = invOp.noise_cov->names;
-
-//        if(bUpdateMinimumNorm) {
-//            qDebug() << "hier?";
-//            pMinimumNorm = MinimumNorm::SPtr(new MinimumNorm(invOp, lambda2, sMethod));
-//            bUpdateMinimumNorm = false;
-//            // Set up the inverse according to the parameters.
-//            // Use 1 nave here because in case of evoked data as input the minimum norm will always be updated when the source estimate is calculated (see run method).
-//            pMinimumNorm->doInverseSetup(1,true);
-//        }
-
-//        for(int i = 0; i < pFiffEvokedSet->evoked.size(); ++i) {
-//            qDebug() << "oder hier?";
-//            if(pFiffEvokedSet->evoked.at(i).comment == sAvrType) {
-//                // Get the current evoked data
-//                qDebug() << "a";
-//                currentEvoked = pFiffEvokedSet->evoked.at(i).pick_channels(pickedChannels);
-//                qDebug() << "a2";
-//                sourceEstimate = pMinimumNorm->calculateInverse(currentEvoked);
-
-//                if(((skip_count % iDownSample) == 0)) {
-//                    qDebug() << "b";
-//                    sourceEstimate = pMinimumNorm->calculateInverse(currentEvoked);
-//                    qDebug() << "c";
-//                    if(!sourceEstimate.isEmpty()) {
-//                        if(iTimePointSps < sourceEstimate.data.cols() && iTimePointSps >= 0) {
-//                            qDebug() << "d";
-//                            sourceEstimate = sourceEstimate.reduce(iTimePointSps,1);
-//                            std::cout << sourceEstimate.data << std::endl;
-//                        }
-//                    }
-//                }
-
-//                ++skip_count;
-
-//            }
-//        }
-
-
-        // Write Data
-        if(first_buffer) {
-            if(first > 0) {
-                outfid->write_int(FIFF_FIRST_SAMPLE, &first);
+        if(bWriteFilteredData) {
+            // Write Data
+            if(first_buffer) {
+                if(first > 0) {
+                    outfid->write_int(FIFF_FIRST_SAMPLE, &first);
+                }
+                first_buffer = false;
             }
-            first_buffer = false;
+            outfid->write_raw_buffer(matData,cals);
         }
-        outfid->write_raw_buffer(matData,cals);
     }
 
-
+    // ready
     outfid->finish_writing_raw();
-    qDebug() << "Done";
-    return a.exec();
 
     if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
-                                                                   evoked.comment,
+                                                                   currentEvoked.comment,
                                                                    sourceEstimate,
                                                                    forwardMeg,
                                                                    *pSurfaceSet.data(),
@@ -931,5 +875,7 @@ int main(int argc, char *argv[])
     }
 
     p3DAbstractView->show();
+    qDebug() << "Done";
 
+    return a.exec();;
 }
