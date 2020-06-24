@@ -132,10 +132,19 @@ using namespace RTPROCESSINGLIB;
 //=============================================================================================================
 // member variables
 //=============================================================================================================
-Qt3DCore::QTransform m_tAlignment;
+
+Qt3DCore::QTransform                        m_tAlignment;
+QPointer<DISP3DLIB::BemTreeItem>            m_pBemHeadAvr;
+QPointer<DISP3DLIB::DigitizerSetTreeItem>   m_pTrackedDigitizer;
+Data3DTreeModel::SPtr                       m_p3DDataModel;
+FIFFLIB::FiffEvokedSet                      m_evokedSet;
+QStringList                                 m_lResponsibleTriggerTypes;
+
+//=============================================================================================================
+// functions
 //=============================================================================================================
 
-void alignFiducials(const QString& sFilePath, QPointer<DISP3DLIB::BemTreeItem> m_pBemHeadAvr)
+void alignFiducials(const QString& sFilePath)
 {
     //Calculate the alignment of the fiducials
     MneMshDisplaySurfaceSet* pMneMshDisplaySurfaceSet = new MneMshDisplaySurfaceSet();
@@ -189,7 +198,35 @@ void alignFiducials(const QString& sFilePath, QPointer<DISP3DLIB::BemTreeItem> m
 
     delete pMneMshDisplaySurfaceSet;
 }
+
 //=============================================================================================================
+
+void update3DView(HpiFitResult fitResult) {
+    // update 3D view
+    m_p3DDataModel->addDigitizerData("Subject",
+                                   "Fitted Digitizers",
+                                   fitResult.fittedCoils.pickTypes(QList<int>()<<FIFFV_POINT_EEG));
+    //Update fast scan / tracked digitizer
+    QList<QStandardItem*> itemList = m_pTrackedDigitizer->findChildren(Data3DTreeModelItemTypes::DigitizerItem);
+    for(int j = 0; j < itemList.size(); ++j) {
+        if(DigitizerTreeItem* pDigItem = dynamic_cast<DigitizerTreeItem*>(itemList.at(j))) {
+            // apply inverse to get from head to device space
+            pDigItem->setTransform(fitResult.devHeadTrans, true);
+        }
+    }
+
+    // Update average head
+    itemList = m_pBemHeadAvr->findChildren(Data3DTreeModelItemTypes::BemSurfaceItem);
+    for(int j = 0; j < itemList.size(); ++j) {
+        if(BemSurfaceTreeItem* pBemItem = dynamic_cast<BemSurfaceTreeItem*>(itemList.at(j))) {
+            pBemItem->setTransform(m_tAlignment);
+            // apply inverse to get from head to device space
+            pBemItem->applyTransform(fitResult.devHeadTrans, true);
+        }
+    }
+}
+//=============================================================================================================
+
 Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
 
     // Use SSP + SGM + calibration
@@ -231,9 +268,6 @@ Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
 
     return matSparseProjMult;
 }
-
-FIFFLIB::FiffEvokedSet m_evokedSet;
-QStringList m_lResponsibleTriggerTypes;
 
 //=============================================================================================================
 
@@ -309,23 +343,23 @@ int main(int argc, char *argv[])
     // Setup GUI and load average head
 
     AbstractView::SPtr p3DAbstractView = AbstractView::SPtr(new AbstractView());
-    Data3DTreeModel::SPtr p3DDataModel = p3DAbstractView->getTreeModel();
+    m_p3DDataModel = p3DAbstractView->getTreeModel();
 
     QFile t_fileVVSensorSurfaceBEM(QCoreApplication::applicationDirPath() + "/resources/general/sensorSurfaces/306m.fif");
     MNEBem t_sensorVVSurfaceBEM(t_fileVVSensorSurfaceBEM);
-    p3DDataModel->addMegSensorInfo("Device", "VectorView", QList<FiffChInfo>(), t_sensorVVSurfaceBEM);
+    m_p3DDataModel->addMegSensorInfo("Device", "VectorView", QList<FiffChInfo>(), t_sensorVVSurfaceBEM);
 
     QFile t_fileHeadAvr(QCoreApplication::applicationDirPath() + "/resources/general/hpiAlignment/fsaverage-head.fif");;
     MNEBem t_BemHeadAvr(t_fileHeadAvr);
-    QPointer<DISP3DLIB::BemTreeItem> pBemHeadAvr = p3DDataModel->addBemData("Subject", "Average head", t_BemHeadAvr);
+    m_pBemHeadAvr = m_p3DDataModel->addBemData("Subject", "Average head", t_BemHeadAvr);
 
 
     FiffDigPointSet digSet(t_fileRaw);
     FiffDigPointSet digSetWithoutAdditional = digSet.pickTypes(QList<int>()<<FIFFV_POINT_HPI<<FIFFV_POINT_CARDINAL<<FIFFV_POINT_EEG);
-    QPointer<DISP3DLIB::DigitizerSetTreeItem> pTrackedDigitizer = p3DDataModel->addDigitizerData("Subject",
+    m_pTrackedDigitizer = m_p3DDataModel->addDigitizerData("Subject",
                                                                                                  "Tracked Digitizers",
                                                                                                  digSetWithoutAdditional);
-    alignFiducials(t_fileRaw.fileName(), pBemHeadAvr);
+    alignFiducials(t_fileRaw.fileName());
 
     p3DAbstractView->show();
 
@@ -493,12 +527,11 @@ int main(int argc, char *argv[])
     pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200,defaultD,fiffComputedCov)));
 
     // ToDo Plot in head space
-    QList<SourceSpaceTreeItem*> pSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
-    QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
+    QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
+    QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
 
 
     //=============================================================================================================
-
     // setup MNE source estimate
 
     QString sAvrType = "3";
@@ -610,28 +643,8 @@ int main(int argc, char *argv[])
         if(dMeanErrorDist < dErrorMax) {
             HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
 
-            // update 3D view
-            p3DDataModel->addDigitizerData("Subject",
-                                             "Fitted Digitizers",
-                                             fitResult.fittedCoils.pickTypes(QList<int>()<<FIFFV_POINT_EEG));
-            //Update fast scan / tracked digitizer
-            QList<QStandardItem*> itemList = pTrackedDigitizer->findChildren(Data3DTreeModelItemTypes::DigitizerItem);
-            for(int j = 0; j < itemList.size(); ++j) {
-                if(DigitizerTreeItem* pDigItem = dynamic_cast<DigitizerTreeItem*>(itemList.at(j))) {
-                    // apply inverse to get from head to device space
-                    pDigItem->setTransform(fitResult.devHeadTrans, true);
-                }
-            }
-
-            // Update average head
-            itemList = pBemHeadAvr->findChildren(Data3DTreeModelItemTypes::BemSurfaceItem);
-            for(int j = 0; j < itemList.size(); ++j) {
-                if(BemSurfaceTreeItem* pBemItem = dynamic_cast<BemSurfaceTreeItem*>(itemList.at(j))) {
-                    pBemItem->setTransform(m_tAlignment);
-                    // apply inverse to get from head to device space
-                    pBemItem->applyTransform(fitResult.devHeadTrans, true);
-                }
-            }
+            // update 3D View
+            update3DView(fitResult);
 
             // check displacement
             dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
