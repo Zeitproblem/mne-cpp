@@ -89,6 +89,7 @@
 #include <mne/c/mne_surface_or_volume.h>
 #include <mne/mne_forwardsolution.h>
 #include <mne/mne_sourceestimate.h>
+#include <mne/mne.h>
 
 #include <rtprocessing/filter.h>
 #include <rtprocessing/helpers/filterio.h>
@@ -139,7 +140,11 @@ QPointer<DISP3DLIB::DigitizerSetTreeItem>   m_pTrackedDigitizer;
 Data3DTreeModel::SPtr                       m_p3DDataModel;
 FIFFLIB::FiffEvokedSet                      m_evokedSet;
 QStringList                                 m_lResponsibleTriggerTypes;
-
+QStringList                                 m_qListCovChNames;          /**< Covariance channel names. */
+QStringList                                 m_qListPickChannels;        /**< Channels to pick. */
+QSharedPointer<FIFFLIB::FiffInfo>           m_pFiffInfoInput;           /**< Fiff information of the evoked. */
+QSharedPointer<FIFFLIB::FiffInfoBase>       m_pFiffInfoForward;         /**< Fiff information of the forward solution. */
+QSharedPointer<FIFFLIB::FiffInfo>           m_pFiffInfo;                /**< Fiff information. */
 //=============================================================================================================
 // functions
 //=============================================================================================================
@@ -271,6 +276,101 @@ Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
 
 //=============================================================================================================
 
+bool calcFiffInfo()
+{
+
+    if(m_qListCovChNames.size() > 0 && m_pFiffInfoInput && m_pFiffInfoForward) {
+        qDebug() << "[RtcMne::calcFiffInfoFiff] Infos available";
+
+        //        qDebug() << "RtcMne::calcFiffInfo - m_qListCovChNames" << m_qListCovChNames;
+        //        qDebug() << "RtcMne::calcFiffInfo - m_pFiffInfoForward->ch_names" << m_pFiffInfoForward->ch_names;
+        //        qDebug() << "RtcMne::calcFiffInfo - m_pFiffInfoInput->ch_names" << m_pFiffInfoInput->ch_names;
+
+        // Align channel names of the forward solution to the incoming averaged (currently acquired) data
+        // Find out whether the forward solution depends on only MEG, EEG or both MEG and EEG channels
+        QStringList forwardChannelsTypes;
+        m_pFiffInfoForward->ch_names.clear();
+        int counter = 0;
+
+        for(qint32 x = 0; x < m_pFiffInfoForward->chs.size(); ++x) {
+            if(forwardChannelsTypes.contains("MEG") && forwardChannelsTypes.contains("EEG"))
+                break;
+
+            if(m_pFiffInfoForward->chs[x].kind == FIFFV_MEG_CH && !forwardChannelsTypes.contains("MEG"))
+                forwardChannelsTypes<<"MEG";
+
+            if(m_pFiffInfoForward->chs[x].kind == FIFFV_EEG_CH && !forwardChannelsTypes.contains("EEG"))
+                forwardChannelsTypes<<"EEG";
+        }
+
+        //If only MEG channels are used
+        if(forwardChannelsTypes.contains("MEG") && !forwardChannelsTypes.contains("EEG")) {
+            for(qint32 x = 0; x < m_pFiffInfoInput->chs.size(); ++x)
+            {
+                if(m_pFiffInfoInput->chs[x].kind == FIFFV_MEG_CH) {
+                    m_pFiffInfoForward->chs[counter].ch_name = m_pFiffInfoInput->chs[x].ch_name;
+                    m_pFiffInfoForward->ch_names << m_pFiffInfoInput->chs[x].ch_name;
+                    counter++;
+                }
+            }
+        }
+
+        //If only EEG channels are used
+        if(!forwardChannelsTypes.contains("MEG") && forwardChannelsTypes.contains("EEG")) {
+            for(qint32 x = 0; x < m_pFiffInfoInput->chs.size(); ++x)
+            {
+                if(m_pFiffInfoInput->chs[x].kind == FIFFV_EEG_CH) {
+                    m_pFiffInfoForward->chs[counter].ch_name = m_pFiffInfoInput->chs[x].ch_name;
+                    m_pFiffInfoForward->ch_names << m_pFiffInfoInput->chs[x].ch_name;
+                    counter++;
+                }
+            }
+        }
+
+        //If both MEG and EEG channels are used
+        if(forwardChannelsTypes.contains("MEG") && forwardChannelsTypes.contains("EEG")) {
+            //qDebug()<<"RtcMne::calcFiffInfo - MEG EEG fwd solution";
+            for(qint32 x = 0; x < m_pFiffInfoInput->chs.size(); ++x)
+            {
+                if(m_pFiffInfoInput->chs[x].kind == FIFFV_MEG_CH || m_pFiffInfoInput->chs[x].kind == FIFFV_EEG_CH) {
+                    m_pFiffInfoForward->chs[counter].ch_name = m_pFiffInfoInput->chs[x].ch_name;
+                    m_pFiffInfoForward->ch_names << m_pFiffInfoInput->chs[x].ch_name;
+                    counter++;
+                }
+            }
+        }
+
+        //Pick only channels which are present in all data structures (covariance, evoked and forward)
+        QStringList tmp_pick_ch_names;
+        foreach (const QString &ch, m_pFiffInfoForward->ch_names)
+        {
+            if(m_pFiffInfoInput->ch_names.contains(ch))
+                tmp_pick_ch_names << ch;
+        }
+        m_qListPickChannels.clear();
+
+        foreach (const QString &ch, tmp_pick_ch_names)
+        {
+            if(m_qListCovChNames.contains(ch))
+                m_qListPickChannels << ch;
+        }
+        RowVectorXi sel = m_pFiffInfoInput->pick_channels(m_qListPickChannels);
+
+        //qDebug() << "RtcMne::calcFiffInfo - m_qListPickChannels.size()" << m_qListPickChannels.size();
+        //qDebug() << "RtcMne::calcFiffInfo - m_qListPickChannels" << m_qListPickChannels;
+
+        m_pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(m_pFiffInfoInput->pick_info(sel)));
+
+        // qDebug() << "RtcMne::calcFiffInfo - m_pFiffInfo" << m_pFiffInfo->ch_names;
+
+        return true;
+    }
+
+    return false;
+}
+
+//=============================================================================================================
+
 void onNewEvokedSet(const FIFFLIB::FiffEvokedSet& evokedSet,
                     const QStringList& lResponsibleTriggerTypes) {
 
@@ -324,16 +424,23 @@ int main(int argc, char *argv[])
     FiffRawData rawData(t_fileRaw);
     FiffRawData rawMeas(t_fileMeasName);
 
+    // Setup compensators and projectors so they get applied while reading
+    bool keep_comp = false;
+    fiff_int_t dest_comp = 0;
+//    MNE::setup_compensators(rawData,
+//                            dest_comp,
+//                            keep_comp);
+
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
 
     QStringList exclude;
     exclude << rawData.info.bads << rawData.info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
 
-//    // only compute on grad and meg
-//    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
-//    FiffInfo::SPtr pFiffInfoCompute = QSharedPointer<FiffInfo>(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
-//    QStringList pickedChannels = pFiffInfoCompute->ch_names;
-
+    // only compute on grad and meg
+    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+    FiffInfo::SPtr pFiffInfoCompute = QSharedPointer<FiffInfo>(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
+    QStringList pickedChannels = pFiffInfoCompute->ch_names;
+//    pFiffInfo = FiffInfo::SPtr(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
     double dSFreq = pFiffInfo->sfreq;
 
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
@@ -353,15 +460,23 @@ int main(int argc, char *argv[])
     MNEBem t_BemHeadAvr(t_fileHeadAvr);
     m_pBemHeadAvr = m_p3DDataModel->addBemData("Subject", "Average head", t_BemHeadAvr);
 
-
     FiffDigPointSet digSet(t_fileRaw);
     FiffDigPointSet digSetWithoutAdditional = digSet.pickTypes(QList<int>()<<FIFFV_POINT_HPI<<FIFFV_POINT_CARDINAL<<FIFFV_POINT_EEG);
-    m_pTrackedDigitizer = m_p3DDataModel->addDigitizerData("Subject",
-                                                                                                 "Tracked Digitizers",
-                                                                                                 digSetWithoutAdditional);
+    m_pTrackedDigitizer = m_p3DDataModel->addDigitizerData("Subject","Tracked Digitizers",digSetWithoutAdditional);
     alignFiducials(t_fileRaw.fileName());
 
-    p3DAbstractView->show();
+    SurfaceSet::SPtr pSurfaceSet = SurfaceSet::SPtr(new SurfaceSet(sSurfaceDir+"/lh.orig", sSurfaceDir+"/rh.orig"));
+    m_p3DDataModel->addSurfaceSet("Subject", "MRI", *pSurfaceSet.data(), *pAnnotationSet.data());
+
+    // buterfly plot
+//    DISPLIB::ButterflyView::SPtr m_pButterflyView = DISPLIB::ButterflyView::SPtr(new DISPLIB::ButterflyView());
+//    QSharedPointer<DISPLIB::EvokedSetModel> m_pEvokedModel;
+//    QSharedPointer<DISPLIB::ChannelInfoModel> m_pChannelInfoModel = DISPLIB::ChannelInfoModel::SPtr::create(pFiffInfo);
+//    m_pEvokedModel->setEvokedSet(pFiffEvokedSet);
+//    m_pButterflyView->setEvokedSetModel(m_pEvokedModel);
+//    m_pButterflyView->setChannelInfoModel(m_pChannelInfoModel);
+//    m_pButterflyView->dataUpdate();
+//    m_pButterflyView->updateView();
 
     //=============================================================================================================
     // Setup customisable values
@@ -403,6 +518,11 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup averaging
 
+    QMap<QString,double> mapReject;
+    mapReject.insert("eog", 100e-06);
+    mapReject.insert("grad", 3000e-13);
+    mapReject.insert("mag", 3.5e-12);
+
     QMap<QString,int>       mapStimChsIndexNames;
     QMap<QString,double>    mapThresholdsFirst;
     QMap<QString,int>       mapThresholdsSecond;
@@ -417,11 +537,12 @@ int main(int argc, char *argv[])
     QStringList lResponsibleTriggerTypes;
     lResponsibleTriggerTypes << "3";
 
-    bool bDoArtifactThresholdReduction = true;
-    int iPreStimSamples = 0*dSFreq;
-    int iPostStimSamples = ((float)250/1000)*dSFreq;
-    int iBaselineFromSamples = ((float)0/1000)*dSFreq;
-    int iBaselineToSamples = ((float)210/1000)*dSFreq;
+    // define source time series
+    bool bDoArtifactThresholdReduction = false;
+    int iPreStimSamples = 0;
+    int iPostStimSamples = 125;
+    int iBaselineFromSamples = 0;
+    int iBaselineToSamples = 100;
     int iNumAverages = 10;
     int iCurrentStimChIdx = mapStimChsIndexNames.value("STI001");
 
@@ -492,6 +613,8 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup Forward solution
 
+    bool bDoHeadPosUpdate = false;
+
     QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
 
     ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
@@ -503,7 +626,7 @@ int main(int argc, char *argv[])
     pFwdSettings->transname.clear();
     pFwdSettings->eeg_model_name = "Default";
     pFwdSettings->include_meg = true;
-    pFwdSettings->include_eeg = true;
+    pFwdSettings->include_eeg = false;
     pFwdSettings->accurate = true;
     pFwdSettings->mindist = 5.0f/1000.0f;
     pFwdSettings->pFiffInfo = pFiffInfo;
@@ -523,8 +646,11 @@ int main(int argc, char *argv[])
 
     Eigen::MatrixXd defaultD;       // default cluster operator
 
-    pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution, false, true));
+    pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution));
     pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200,defaultD,fiffComputedCov)));
+    m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(pClusteredFwd->info));
+
+    MNEForwardSolution forwardMeg = pClusteredFwd->pick_types(true, false);
 
     // ToDo Plot in head space
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
@@ -536,8 +662,7 @@ int main(int argc, char *argv[])
 
     QString sAvrType = "3";
     QString sMethod = "dSPM";
-    SurfaceSet::SPtr pSurfaceSet = SurfaceSet::SPtr(new SurfaceSet(sSurfaceDir+"/lh.orig", sSurfaceDir+"/rh.orig"));
-    RtInvOp::SPtr pRtInvOp = RtInvOp::SPtr(new RtInvOp(pFiffInfo, pFwdSolution));
+    RtInvOp::SPtr pRtInvOp = RtInvOp::SPtr(new RtInvOp(pFiffInfoCompute, pFwdSolution));
     MNELIB::MNEInverseOperator invOp;
     FiffEvoked currentEvoked;
 
@@ -558,6 +683,7 @@ int main(int argc, char *argv[])
 
     //=============================================================================================================
     // setup Filter
+
     double dFromFreq = 1.0;
     double dToFreq = 40.0;
     double dTransWidth = 0.1;
@@ -590,6 +716,7 @@ int main(int argc, char *argv[])
     }
     //=============================================================================================================
     // prepare writing
+
     RowVectorXd cals;
     QFile t_fileOut(QCoreApplication::applicationDirPath() + "/MNE-sample-data/test_filter_raw.fif");
     FiffStream::SPtr outfid = FiffStream::start_writing_raw(t_fileOut, rawData.info,cals);
@@ -659,15 +786,24 @@ int main(int argc, char *argv[])
         }
 
         // update Forward solution:
-//        if(fitResult.bIsLargeHeadMovement) {
-//            transMegHeadOld = fitResult.devHeadTrans.toOld();
-//            pComputeFwd->updateHeadPos(&transMegHeadOld);
-//            pFwdSolution->sol = pComputeFwd->sol;
-//            pFwdSolution->sol_grad = pComputeFwd->sol_grad;
-//            pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
-//            pRtInvOp->setFwdSolution(pFwdSolution);
-//            pRtInvOp->append(fiffComputedCov);
-        //        }
+        if(bDoHeadPosUpdate) {
+            if(fitResult.bIsLargeHeadMovement) {
+                transMegHeadOld = fitResult.devHeadTrans.toOld();
+                pComputeFwd->updateHeadPos(&transMegHeadOld);
+                pFwdSolution->sol = pComputeFwd->sol;
+                pFwdSolution->sol_grad = pComputeFwd->sol_grad;
+                pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
+                forwardMeg = pClusteredFwd->pick_types(true, false);
+                invOp = MNEInverseOperator(*pFiffInfo.data(),
+                                           forwardMeg,
+                                           fiffComputedCov,
+                                           0.2f,
+                                           0.8f);
+                m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));
+//                pRtInvOp->setFwdSolution(pFwdSolution);
+//                pRtInvOp->append(fiffComputedCov);
+            }
+        }
 
         // Filtering
         matData = matSparseProjMult * matData;
@@ -681,8 +817,13 @@ int main(int argc, char *argv[])
         fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);
         if(!fiffCov.names.isEmpty()) {
             fiffComputedCov = fiffCov;
-            qDebug() << "adg";
-            pRtInvOp->append(fiffComputedCov);
+//            pRtInvOp->append(fiffComputedCov);
+            m_qListCovChNames = fiffComputedCov.names;
+            invOp = MNEInverseOperator(*pFiffInfoCompute.data(),
+                                       forwardMeg,
+                                       fiffComputedCov,
+                                       0.2f,
+                                       0.8f);
             qDebug() << "Covariance updated";
         }
 
@@ -694,24 +835,29 @@ int main(int argc, char *argv[])
             }
         }
         pRtAve->append(matData);
-        qDebug() << "oha" ;
         QObject::connect(pRtAve.data(), &RtAve::evokedStim, onNewEvokedSet);
         evokedSet = m_evokedSet;
         lResponsibleTriggerTypes = m_lResponsibleTriggerTypes;
 
-        if(evokedSet.evoked.at(0).nave > 0) {
+        if(evokedSet.evoked.size()>0 && !fiffComputedCov.names.isEmpty()) {
+
             currentEvoked = evokedSet.evoked.at(0);
-            DISPLIB::ImageSc imagesc(currentEvoked.data);
-            imagesc.setTitle("Data ImageSc");
-            imagesc.setXLabel("X Axes");
-            imagesc.setYLabel("Y Axes");
-            imagesc.setColorMap("Hot");//imagesc.setColorMap("Jet");//imagesc.setColorMap("RedBlue");//imagesc.setColorMap("Bone");//imagesc.setColorMap("Jet");//imagesc.setColorMap("Hot");
-            imagesc.show();
+            FiffEvoked megEvoked = currentEvoked.pick_channels(pickedChannels);
+            m_pFiffInfoInput = QSharedPointer<FiffInfo>(new FiffInfo(megEvoked.info));
+
+            calcFiffInfo();
+
+            // IOUtils::write_eigen_matrix(megEvoked.data, QCoreApplication::applicationDirPath() + "/MNE-sample-data/result.txt");
+
+            MinimumNorm minimumNorm(invOp, lambda2, sMethod);
+            MNESourceEstimate sourceEstimate = minimumNorm.calculateInverse(currentEvoked);
+            if(!sourceEstimate.isEmpty()) {
+                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
+                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
+            }
         }
 
-
         // source estimate
-        FiffEvokedSet::SPtr pFiffEvokedSet = FiffEvokedSet::SPtr(new FiffEvokedSet(evokedSet));
 
 //        iNumberChannels = invOp.noise_cov->names.size();
 //        lChNamesFiffInfo = pickedChannels;
@@ -762,11 +908,28 @@ int main(int argc, char *argv[])
             first_buffer = false;
         }
         outfid->write_raw_buffer(matData,cals);
-
-
-
     }
+
+
     outfid->finish_writing_raw();
     qDebug() << "Done";
     return a.exec();
+
+    if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
+                                                                   evoked.comment,
+                                                                   sourceEstimate,
+                                                                   forwardMeg,
+                                                                   *pSurfaceSet.data(),
+                                                                   *pAnnotationSet.data())) {
+        pRTDataItem->setLoopState(true);
+        pRTDataItem->setTimeInterval(17);
+        pRTDataItem->setNumberAverages(1);
+        pRTDataItem->setStreamingState(true);
+        pRTDataItem->setThresholds(QVector3D(0.0,0.5,10.0));
+        pRTDataItem->setVisualizationType("Interpolation based");
+        pRTDataItem->setColormapType("Hot");
+    }
+
+    p3DAbstractView->show();
+
 }
