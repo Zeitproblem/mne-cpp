@@ -404,19 +404,21 @@ int main(int argc, char *argv[])
 
     QCommandLineOption writeOption("write", "Write the filtered data to .fif.", "bool", "false");
     QCommandLineOption moveCompOption("movComp", "Perform head position updates", "bool", "false");
+    QCommandLineOption hpiOption("hpi", "Is HPI fitting acquired?", "bool", "true");
     QCommandLineOption fastFitOption("fastFit", "Do fast HPI fits.", "bool", "true");
     QCommandLineOption maxMoveOption("maxMove", "Maximum head movement in mm.", "value", "3");
     QCommandLineOption maxRotOption("maxRot", "Maximum head rotation in degree.", "value", "5");
     QCommandLineOption coilTypeOption("coilType", "The coil <type> (for sensor level usage only), 'eeg', 'grad' or 'mag'.", "type", "grad");
-    QCommandLineOption clustOption("doClust", "Do clustering of source space (for source level usage only).", "doClust", "true");
+    QCommandLineOption clustOption("cluster", "Do clustering of source space (for source level usage only).", "doClust", "true");
     QCommandLineOption sourceLocMethodOption("sourceLocMethod", "Inverse estimation <method> (for source level usage only), i.e., 'MNE', 'dSPM' or 'sLORETA'.", "method", "dSPM");
     QCommandLineOption rawFileOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
     QCommandLineOption logOption("log", "Log the computation and store results to file.", "bool", "true");
-    QCommandLineOption logDirOption("logDir", "The directory to log the results.", "string", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/evaluation");
+    QCommandLineOption logDirOption("logDir", "The directory to log the results.", "string", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/evaluation");
     QCommandLineOption idOption("id", "The id for the measurement", "id", "id");
 
     parser.addOption(writeOption);
     parser.addOption(moveCompOption);
+    parser.addOption(hpiOption);
     parser.addOption(fastFitOption);
     parser.addOption(maxMoveOption);
     parser.addOption(maxRotOption);
@@ -448,11 +450,17 @@ int main(int argc, char *argv[])
     float dAllowedMovement = parser.value(maxMoveOption).toFloat()/1000.0;
     float dAllowedRotation = parser.value(maxRotOption).toFloat();
     bool bDoFastFit = true;                 // fast fit or advanced linear model
+    bool bDoHPIFit = true;
 
     if(parser.value(fastFitOption) == "false" || parser.value(fastFitOption) == "0") {
         bDoFastFit = false;
     } else if(parser.value(fastFitOption) == "true" || parser.value(fastFitOption) == "1") {
         bDoFastFit = true;
+    }
+    if(parser.value(hpiOption) == "false" || parser.value(hpiOption) == "0") {
+        bDoHPIFit = false;
+    } else if(parser.value(hpiOption) == "true" || parser.value(hpiOption) == "1") {
+        bDoHPIFit = true;
     }
 
     // Forward Solution#
@@ -670,7 +678,10 @@ int main(int argc, char *argv[])
     // setup Forward solution
 
     QFile t_fileAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
-
+    VectorXd vecTimeUpdate = vecTime;       // store time elapsed during head position update
+    if(!bDoHeadPosUpdate) {
+        vecTimeUpdate.fill(0);
+    }
     ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
     pFwdSettings->solname = QCoreApplication::applicationDirPath() + "/MNE-sample-data/your-solution-fwd.fif";
     pFwdSettings->mriname = t_fileMriName.fileName();
@@ -813,21 +824,49 @@ int main(int argc, char *argv[])
             stream << " --logDir " << sLogDir << "\n";
             stream << " --write " << bWriteFilteredData << "\n";
             stream << " --sourceLocMethod " << sMethod << "\n";
-            stream << " --doClust " << bDoCluster << "\n";
+            stream << " --cluster " << bDoCluster << "\n";
             stream << " --coilType " << sCoilType << "\n";
-            stream << " --doClust " << bDoCluster << "\n";
+            stream << " --hpi " << bDoHPIFit << "\n";
             stream << " --movComp " << bDoHeadPosUpdate << "\n";
             stream << " --fastFit " << bDoFastFit << "\n";
             stream << " --maxMove " << dAllowedMovement * 1000 << "\n";
             stream << " --maxRot " << dAllowedRotation << "\n";
+            stream << "\n";
+            stream << "\n";
+            stream << "Filter:" << "\n";
+            stream << "Type: " << "BPF" << "\n";
+            stream << "Method: " << "Cosine" << "\n";
+            stream << "From: " << dFromFreq << "\n";
+            stream << "To: " << dToFreq << "\n";
+            stream << "BandWith: " << dBw << "\n";
+            stream << "Transition band: " << dTransWidth << "\n";
+            stream << "Filter Tabs: " << iFilterTabs << "\n";
+            stream << "\n";
+            stream << "\n";
+            stream << "Average Settings:" << "\n";
+            stream << "Pre stim: " << iPreStimSamples << "\n";
+            stream << "Post stim: " << iPostStimSamples << "\n";
+            stream << "Baseline from: " << iBaselineFromSamples << "\n";
+            stream << "Baseline to: " << iBaselineToSamples << "\n";
+            stream << "Number Averages: " << iNumAverages << "\n";
+            stream << "Stim Channels: " << iCurrentStimChIdx << "\n";
+            stream << "\n";
+            stream << "\n";
+            stream << "Source Space:" << "\n";
+            stream << "Number Spaces: " << pFwdSolution->src.size() << "\n";
+            stream << "Number Sources: " << pFwdSolution->nsource << "\n";
+            stream << "Number Sources Clustered: " << pFwdSolution->nsource << "\n";
+            stream << "\n";
+            stream << "\n";
+            stream << "HPI:" << "\n";
+            stream << "Number coils: " << vecFreqs.size() << "\n";
         }
     }
-    a.exec();
+
     //=============================================================================================================
     // actual pipeline
 
     QElapsedTimer timer;
-    timer.start();
     for(int i = 0; i < vecTime.size(); i++) {
         from = first + vecTime(i);
         to = from + iQuantum;
@@ -840,80 +879,82 @@ int main(int argc, char *argv[])
             qCritical("error during read_raw_segment");
             return -1;
         }
-
-        // coil ordering
-        if(!bSorted) {
-            while(!bSorted) {
-                qDebug() << "order coils";
-                bSorted = HPI.findOrder(matData,
-                                        matSparseProjMult,
-                                        transDevHeadFit,
-                                        vecFreqs,
-                                        fitResult.errorDistances,
-                                        fitResult.GoF,
-                                        fitResult.fittedCoils,
-                                        pFiffInfo);
-            }
-            qDebug() << "Coil frequencies ordered: " << vecFreqs;
-        }
-
-        // HPI fit
-        HPI.fitHPI(matData,
-                   matSparseProjMult,
-                   fitResult.devHeadTrans,
-                   vecFreqs,
-                   fitResult.errorDistances,
-                   fitResult.GoF,
-                   fitResult.fittedCoils,
-                   pFiffInfo,
-                   bDoDebug,
-                   sHPIResourceDir);
-
-        // get mean estimation error
-        dMeanErrorDist = std::accumulate(fitResult.errorDistances.begin(), fitResult.errorDistances.end(), .0) / fitResult.errorDistances.size();
-
-        // update head position if good fit
-        if(dMeanErrorDist < dErrorMax) {
-            HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
-
-            // update 3D View (not working yet)
-            update3DView(fitResult);
-
-            // check for big head movement
-            dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
-            dRotation = transDevHeadRef.angleTo(fitResult.devHeadTrans.trans);
-            if(dMovement > dAllowedMovement || dRotation > dAllowedRotation) {
-                matPosition(i,9) = 1;
-                fitResult.bIsLargeHeadMovement = true;
-                transDevHeadRef = fitResult.devHeadTrans;       // update reference head position
-            } else {
-                fitResult.bIsLargeHeadMovement = false;
-            }
-        }
-
-        // update Forward solution
-        if(bDoHeadPosUpdate) {
-            if(fitResult.bIsLargeHeadMovement) {
-                transMegHeadOld = fitResult.devHeadTrans.toOld();
-                pComputeFwd->updateHeadPos(&transMegHeadOld);           // update
-                pFwdSolution->sol = pComputeFwd->sol;                   // store results
-                pFwdSolution->sol_grad = pComputeFwd->sol_grad;
-                // cluster
-                pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
-                forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
-                if(!fiffComputedCov.isEmpty()) {
-                invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                           forwardMeg,
-                                           fiffComputedCov,
-                                           0.2f,
-                                           0.8f);
+        if(bDoHPIFit) {
+            // coil ordering
+            if(!bSorted) {
+                while(!bSorted) {
+                    qDebug() << "order coils";
+                    bSorted = HPI.findOrder(matData,
+                                            matSparseProjMult,
+                                            transDevHeadFit,
+                                            vecFreqs,
+                                            fitResult.errorDistances,
+                                            fitResult.GoF,
+                                            fitResult.fittedCoils,
+                                            pFiffInfo);
                 }
-                m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
-//                pRtInvOp->setFwdSolution(pFwdSolution);
-//                pRtInvOp->append(fiffComputedCov);
+                qDebug() << "Coil frequencies ordered: " << vecFreqs;
+            }
+
+            // HPI fit
+            HPI.fitHPI(matData,
+                       matSparseProjMult,
+                       fitResult.devHeadTrans,
+                       vecFreqs,
+                       fitResult.errorDistances,
+                       fitResult.GoF,
+                       fitResult.fittedCoils,
+                       pFiffInfo,
+                       bDoDebug,
+                       sHPIResourceDir);
+
+            // get mean estimation error
+            dMeanErrorDist = std::accumulate(fitResult.errorDistances.begin(), fitResult.errorDistances.end(), .0) / fitResult.errorDistances.size();
+
+            // update head position if good fit
+            if(dMeanErrorDist < dErrorMax) {
+                HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
+
+                // update 3D View (not working yet)
+                update3DView(fitResult);
+
+                // check for big head movement
+                dMovement = transDevHeadRef.translationTo(fitResult.devHeadTrans.trans);
+                dRotation = transDevHeadRef.angleTo(fitResult.devHeadTrans.trans);
+                if(dMovement > dAllowedMovement || dRotation > dAllowedRotation) {
+                    matPosition(i,9) = 1;
+                    fitResult.bIsLargeHeadMovement = true;
+                    transDevHeadRef = fitResult.devHeadTrans;       // update reference head position
+                } else {
+                    fitResult.bIsLargeHeadMovement = false;
+                }
+            }
+
+            // update Forward solution
+            if(bDoHeadPosUpdate) {
+                if(fitResult.bIsLargeHeadMovement) {
+                    timer.start();
+                    transMegHeadOld = fitResult.devHeadTrans.toOld();
+                    pComputeFwd->updateHeadPos(&transMegHeadOld);           // update
+                    pFwdSolution->sol = pComputeFwd->sol;                   // store results
+                    pFwdSolution->sol_grad = pComputeFwd->sol_grad;
+                    // cluster
+                    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
+                    forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
+                    vecTimeUpdate(i) = timer.elapsed();
+                    if(!fiffComputedCov.isEmpty()) {
+                    invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
+                                               forwardMeg,
+                                               fiffComputedCov,
+                                               0.2f,
+                                               0.8f);
+                    }
+                    m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
+    //                pRtInvOp->setFwdSolution(pFwdSolution);
+    //                pRtInvOp->append(fiffComputedCov);
+                }
             }
         }
-
         // Filtering
         matData = matSparseProjMult * matData;
         QList<FilterKernel> list;
@@ -964,6 +1005,10 @@ int main(int argc, char *argv[])
             if(!sourceEstimate.isEmpty()) {
 //                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
 //                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
+                if(bDoLogging) {
+                    QFile fileSTC(sCurrentDir + "/" + sID + "_" + QString::number(i) + "_stc");
+                    sourceEstimate.write(fileSTC);
+                }
             }
         }
         if(bWriteFilteredData) {
@@ -1000,13 +1045,15 @@ int main(int argc, char *argv[])
     }
 
     p3DAbstractView->show();
-    qDebug() << "Done";
-    qDebug() << timer.elapsed();
 
     // write hpi results
     if(bDoLogging) {
         QString sHPIFile = sID + "_hpi.txt";
+        QString sTimeFile = sID + "_updateTime.txt";
         IOUtils::write_eigen_matrix(matPosition, sCurrentDir + "/" + sHPIFile);
+        IOUtils::write_eigen_matrix(vecTimeUpdate, sCurrentDir + "/" + sTimeFile);
     }
+
+    qDebug() << "Done";
     return a.exec();;
 }
