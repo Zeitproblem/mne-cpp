@@ -620,6 +620,7 @@ int main(int argc, char *argv[])
     int iBaselineFromSamples = 0;
     int iBaselineToSamples = 100;
     int iNumAverages = 10;
+    QString sStimChan = "STI001";
     int iCurrentStimChIdx = mapStimChsIndexNames.value("STI001");
 
     QSharedPointer<RTPROCESSINGLIB::RtAve> pRtAve;
@@ -712,7 +713,7 @@ int main(int argc, char *argv[])
     Eigen::MatrixXd defaultD;       // default cluster operator
 
     pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution));
-    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200,defaultD,fiffComputedCov)));
+    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20,defaultD,fiffComputedCov)));
     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(pClusteredFwd->info));
 
     MNEForwardSolution forwardMeg = pClusteredFwd->pick_types(true, false);
@@ -849,7 +850,7 @@ int main(int argc, char *argv[])
             stream << "Baseline from: " << iBaselineFromSamples << "\n";
             stream << "Baseline to: " << iBaselineToSamples << "\n";
             stream << "Number Averages: " << iNumAverages << "\n";
-            stream << "Stim Channels: " << iCurrentStimChIdx << "\n";
+            stream << "Stim Channels: " << sStimChan << "\n";
             stream << "\n";
             stream << "\n";
             stream << "Source Space:" << "\n";
@@ -1006,8 +1007,10 @@ int main(int argc, char *argv[])
 //                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
 //                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
                 if(bDoLogging) {
-                    QFile fileSTC(sCurrentDir + "/" + sID + "_" + QString::number(i) + "_stc");
+                    QFile fileSTC(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-vol.stc");
                     sourceEstimate.write(fileSTC);
+                    QFile fileInvOp(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-inv.fif ");
+                    invOp.write(fileInvOp);
                 }
             }
         }
