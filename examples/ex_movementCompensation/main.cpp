@@ -1009,7 +1009,7 @@ int main(int argc, char *argv[])
                 if(bDoLogging) {
                     QFile fileSTC(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-vol.stc");
                     sourceEstimate.write(fileSTC);
-                    QFile fileInvOp(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-inv.fif ");
+                    QFile fileInvOp(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-inv.fif");
                     invOp.write(fileInvOp);
                 }
             }
