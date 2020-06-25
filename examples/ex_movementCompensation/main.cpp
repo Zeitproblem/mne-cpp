@@ -145,6 +145,7 @@ QStringList                                 m_qListPickChannels;        /**< Cha
 QSharedPointer<FIFFLIB::FiffInfo>           m_pFiffInfoInput;           /**< Fiff information of the evoked. */
 QSharedPointer<FIFFLIB::FiffInfoBase>       m_pFiffInfoForward;         /**< Fiff information of the forward solution. */
 QSharedPointer<FIFFLIB::FiffInfo>           m_pFiffInfo;                /**< Fiff information. */
+
 //=============================================================================================================
 // functions
 //=============================================================================================================
@@ -406,10 +407,13 @@ int main(int argc, char *argv[])
     QCommandLineOption fastFitOption("fastFit", "Do fast HPI fits.", "bool", "true");
     QCommandLineOption maxMoveOption("maxMove", "Maximum head movement in mm.", "value", "3");
     QCommandLineOption maxRotOption("maxRot", "Maximum head rotation in degree.", "value", "5");
-    QCommandLineOption coilTypeOption("coilType", "The coil <type> (for sensor level usage only), i.e. 'grad' or 'mag'.", "type", "grad");
+    QCommandLineOption coilTypeOption("coilType", "The coil <type> (for sensor level usage only), 'eeg', 'grad' or 'mag'.", "type", "grad");
     QCommandLineOption clustOption("doClust", "Do clustering of source space (for source level usage only).", "doClust", "true");
     QCommandLineOption sourceLocMethodOption("sourceLocMethod", "Inverse estimation <method> (for source level usage only), i.e., 'MNE', 'dSPM' or 'sLORETA'.", "method", "dSPM");
     QCommandLineOption rawFileOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
+    QCommandLineOption logOption("log", "Log the computation and store results to file.", "bool", "true");
+    QCommandLineOption logDirOption("logDir", "The directory to log the results.", "string", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/evaluation");
+    QCommandLineOption idOption("id", "The id for the measurement", "id", "id");
 
     parser.addOption(writeOption);
     parser.addOption(moveCompOption);
@@ -420,52 +424,19 @@ int main(int argc, char *argv[])
     parser.addOption(clustOption);
     parser.addOption(sourceLocMethodOption);
     parser.addOption(rawFileOption);
+    parser.addOption(logOption);
+    parser.addOption(logDirOption);
+    parser.addOption(idOption);
 
     parser.process(a);
 
-
-
     //=============================================================================================================
-    // Setup customisable values
+    // Setup customisable values via command line
 
     // Data Stream
-    fiff_int_t iQuantum = 200;              // Buffer size
-    bool bWriteFilteredData = false;        // write filtered data to .fif
-
-    // HPI Fitting
-    double dErrorMax = 0.10;                // maximum allowed estimation error
-    //    double dAllowedMovement = 0.003;        // maximum allowed movement
-    //    double dAllowedRotation = 5;            // maximum allowed rotation
-    bool bDoFastFit = true;                 // fast fit or advanced linear model
-
-    // Forward Solution#
-    bool bDoHeadPosUpdate = false;
-    bool bDoCluster = true;
-
-    // Noise Covariance
-    int iEstimationSamples = 2000;
-
-    // Source estimation
-    //    QString sMethod = "dSPM";               // source estimation method "MNE" "dSPM" "sLORETA"
-
-    // Init from arguments
-    QString sCoilType = parser.value(coilTypeOption);
-    QString sMethod = parser.value(sourceLocMethodOption);
     QString sRaw = parser.value(rawFileOption);
-    float dAllowedMovement = parser.value(maxMoveOption).toFloat()/1000.0;
-    float dAllowedRotation = parser.value(maxRotOption).toFloat();
 
-    if(parser.value(moveCompOption) == "false" || parser.value(moveCompOption) == "0") {
-        bDoHeadPosUpdate = false;
-    } else if(parser.value(moveCompOption) == "true" || parser.value(moveCompOption) == "1") {
-        bDoHeadPosUpdate = true;
-    }
-
-    if(parser.value(fastFitOption) == "false" || parser.value(fastFitOption) == "0") {
-        bDoFastFit = false;
-    } else if(parser.value(fastFitOption) == "true" || parser.value(fastFitOption) == "1") {
-        bDoFastFit = true;
-    }
+    bool bWriteFilteredData = false;        // write filtered data to .fif
 
     if(parser.value(writeOption) == "false" || parser.value(writeOption) == "0") {
         bWriteFilteredData = false;
@@ -473,11 +444,50 @@ int main(int argc, char *argv[])
         bWriteFilteredData = true;
     }
 
+    // HPI Fitting
+    float dAllowedMovement = parser.value(maxMoveOption).toFloat()/1000.0;
+    float dAllowedRotation = parser.value(maxRotOption).toFloat();
+    bool bDoFastFit = true;                 // fast fit or advanced linear model
+
+    if(parser.value(fastFitOption) == "false" || parser.value(fastFitOption) == "0") {
+        bDoFastFit = false;
+    } else if(parser.value(fastFitOption) == "true" || parser.value(fastFitOption) == "1") {
+        bDoFastFit = true;
+    }
+
+    // Forward Solution#
+    bool bDoHeadPosUpdate = false;
+    bool bDoCluster = true;                 // not implemented, always cluster
+
+    if(parser.value(moveCompOption) == "false" || parser.value(moveCompOption) == "0") {
+        bDoHeadPosUpdate = false;
+    } else if(parser.value(moveCompOption) == "true" || parser.value(moveCompOption) == "1") {
+        bDoHeadPosUpdate = true;
+    }
+
+    // Noise Covariance
+    int iEstimationSamples = 2000;
+
+    // Source estimation
+    QString sMethod = parser.value(sourceLocMethodOption);              // source estimation method "MNE" "dSPM" "sLORETA"
+
+    // Sensor Level
+    QString sCoilType = parser.value(coilTypeOption);
+
+    // log option
+    QString sLogDir = parser.value(logDirOption);
+    QString sID = parser.value(idOption);
+
+    bool bDoLogging = false;
+    if(parser.value(logOption) == "false" || parser.value(logOption) == "0") {
+        bDoLogging = false;
+    } else if(parser.value(logOption) == "true" || parser.value(logOption) == "1") {
+        bDoLogging = true;
+    }
 
     //=============================================================================================================
     // Load data
 
-    QFile t_fileRaw(QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
     QFile t_fileMriName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/all-trans.fif");
     QFile t_fileBemName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-5120-5120-5120-bem.fif");
     QFile t_fileSrcName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-oct-6-src.fif");
@@ -486,6 +496,8 @@ int main(int argc, char *argv[])
     QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/filterBPF.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
+
+    QFile t_fileRaw(sRaw);
 
     FiffRawData rawData(t_fileRaw);
     FiffRawData rawMeas(t_fileMeasName);
@@ -502,11 +514,21 @@ int main(int argc, char *argv[])
     QStringList exclude;
     exclude << rawData.info.bads << rawData.info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
 
-    // only compute on grad and meg
-    RowVectorXi vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+    RowVectorXi vecPicks;
+    // pick sensor types
+    if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
+        vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+    } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
+        vecPicks = rawData.info.pick_types(QString("mag"),false,true,QStringList(),exclude);
+    } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
+        vecPicks = rawData.info.pick_types(QString("all"),true,true,QStringList(),exclude);
+    } else {
+        vecPicks = rawData.info.pick_types(QString("all"),false,true,QStringList(),exclude);
+    }
+
     FiffInfo::SPtr pFiffInfoCompute = QSharedPointer<FiffInfo>(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
     QStringList pickedChannels = pFiffInfoCompute->ch_names;
-//    pFiffInfo = FiffInfo::SPtr(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
+
     double dSFreq = pFiffInfo->sfreq;
 
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
@@ -550,6 +572,7 @@ int main(int argc, char *argv[])
     MatrixXd matData, matTimes;
     MatrixXd matPosition;                   // matPosition matrix to save quaternions etc.
 
+    fiff_int_t iQuantum = 200;              // Buffer size
     fiff_int_t from, to;
     fiff_int_t first = rawData.first_samp;
     fiff_int_t last = rawData.last_samp;
@@ -628,6 +651,8 @@ int main(int argc, char *argv[])
     bool bDoDebug = false;
 
     // HPI values
+    double dErrorMax = 0.010;                // maximum allowed estimation error
+
     double dMeanErrorDist = 0.0;
     double dMovement = 0.0;
     double dRotation = 0.0;
@@ -749,6 +774,55 @@ int main(int argc, char *argv[])
     MatrixXd matResultFiltered(lFilterChannelList.size(),last-first);
     bool first_buffer = true;
 
+    //=============================================================================================================
+    // Logging
+
+    qInfo() << "-------------------------------------------------------------------------------------------------";
+    qInfo() << "File: " << sRaw;
+    qInfo() << "Write filtered data to file: " << bWriteFilteredData;
+    qInfo() << "Coil Type: " << sCoilType;
+    qInfo() << "Fast HPI Fit: " << bDoFastFit;
+    qInfo() << "Movement compensation: " << bDoHeadPosUpdate;
+    qInfo() << "Maximum rotation: " << dAllowedRotation;
+    qInfo() << "Maximum displacement" << dAllowedMovement;
+    qInfo() << "Clustered Sources" << forwardMeg.nsource;
+    qInfo() << "-------------------------------------------------------------------------------------------------";
+
+    QString sCurrentDir;
+    if(bDoLogging) {
+
+        QString sTimeStamp = QDateTime::currentDateTime().toString("yyMMdd_hhmmss");
+
+        if(!QDir(sLogDir).exists()) {
+            QDir().mkdir(sLogDir);
+        }
+
+        sCurrentDir = sLogDir + "/" + sTimeStamp + "_" + sID;
+        QDir().mkdir(sCurrentDir);
+        QString sLogFile = sID + "_LogFile.txt";
+        QFile file(sCurrentDir + "/" + sLogFile);
+        qDebug() << file.fileName();
+        qDebug() << sLogFile;
+        qDebug() << sCurrentDir;
+        if(file.open(QIODevice::WriteOnly|QIODevice::Truncate)) {
+            QTextStream stream(&file);
+            stream << "ex_movementCompensation" << "\n";
+            stream << " --id " << sID << "\n";
+            stream << " --fileIn " << sRaw << "\n";
+            stream << " --log " << bDoLogging << "\n";
+            stream << " --logDir " << sLogDir << "\n";
+            stream << " --write " << bWriteFilteredData << "\n";
+            stream << " --sourceLocMethod " << sMethod << "\n";
+            stream << " --doClust " << bDoCluster << "\n";
+            stream << " --coilType " << sCoilType << "\n";
+            stream << " --doClust " << bDoCluster << "\n";
+            stream << " --movComp " << bDoHeadPosUpdate << "\n";
+            stream << " --fastFit " << bDoFastFit << "\n";
+            stream << " --maxMove " << dAllowedMovement * 1000 << "\n";
+            stream << " --maxRot " << dAllowedRotation << "\n";
+        }
+    }
+    a.exec();
     //=============================================================================================================
     // actual pipeline
 
@@ -888,8 +962,8 @@ int main(int argc, char *argv[])
             MinimumNorm minimumNorm(invOp, lambda2, sMethod);
             MNESourceEstimate sourceEstimate = minimumNorm.calculateInverse(currentEvoked);
             if(!sourceEstimate.isEmpty()) {
-                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
-                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
+//                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
+//                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
             }
         }
         if(bWriteFilteredData) {
@@ -908,7 +982,7 @@ int main(int argc, char *argv[])
     outfid->finish_writing_raw();
 
     if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
-                                                                   currentEvoked.comment,
+                                                                   "left auditory",
                                                                    sourceEstimate,
                                                                    forwardMeg,
                                                                    *pSurfaceSet.data(),
@@ -920,10 +994,19 @@ int main(int argc, char *argv[])
         pRTDataItem->setThresholds(QVector3D(0.0,0.5,10.0));
         pRTDataItem->setVisualizationType("Interpolation based");
         pRTDataItem->setColormapType("Hot");
+        pRTDataItem->setAlpha(0.75f);
+        pRTDataItem->setTransform(mriHeadTrans);
+        pRTDataItem->applyTransform(fitResult.devHeadTrans);
     }
 
     p3DAbstractView->show();
     qDebug() << "Done";
     qDebug() << timer.elapsed();
+
+    // write hpi results
+    if(bDoLogging) {
+        QString sHPIFile = sID + "_hpi.txt";
+        IOUtils::write_eigen_matrix(matPosition, sCurrentDir + "/" + sHPIFile);
+    }
     return a.exec();;
 }
