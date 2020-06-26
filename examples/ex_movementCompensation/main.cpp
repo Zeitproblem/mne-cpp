@@ -463,7 +463,7 @@ int main(int argc, char *argv[])
         bDoHPIFit = true;
     }
 
-    // Forward Solution#
+    // Forward Solution
     bool bDoHeadPosUpdate = false;
     bool bDoCluster = true;                 // not implemented, always cluster
 
@@ -471,6 +471,12 @@ int main(int argc, char *argv[])
         bDoHeadPosUpdate = false;
     } else if(parser.value(moveCompOption) == "true" || parser.value(moveCompOption) == "1") {
         bDoHeadPosUpdate = true;
+    }
+
+    if(parser.value(clustOption) == "false" || parser.value(clustOption) == "0") {
+        bDoCluster = false;
+    } else if(parser.value(clustOption) == "true" || parser.value(clustOption) == "1") {
+        bDoCluster = true;
     }
 
     // Noise Covariance
@@ -502,10 +508,9 @@ int main(int argc, char *argv[])
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
     QFile t_fileCov(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis-cov.fif");
 
-    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/filterBPF.txt");
+    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/BPF_0_40_Fs600.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
-
 
     QFile t_fileRaw(sRaw);
 
@@ -721,7 +726,14 @@ int main(int argc, char *argv[])
     pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20,defaultD,noiseCov/*fiffComputedCov*/)));
     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(pClusteredFwd->info));
 
-    MNEForwardSolution forwardMeg = pClusteredFwd->pick_types(true, false);
+    MNEForwardSolution forwardMeg;
+
+    if(bDoCluster) {
+        forwardMeg  = pClusteredFwd->pick_types(true, false);
+    } else {
+        forwardMeg  = pFwdSolution->pick_types(true, false);
+        qDebug() << "Don't using the clustered version.";
+    }
 
     // ToDo Plot in head space
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
@@ -737,6 +749,7 @@ int main(int argc, char *argv[])
                                                           noiseCov,
                                                           0.2f,
                                                           0.8f);;
+
     FiffEvoked currentEvoked;
 
     FiffEvoked evoked;
@@ -765,19 +778,19 @@ int main(int argc, char *argv[])
     int iFilterTabs = 128;
     FilterKernel::DesignMethod dMethod = FilterKernel::Cosine;
     QScopedPointer<RTPROCESSINGLIB::Filter> pRtFilter(new RTPROCESSINGLIB::Filter());
-    RTPROCESSINGLIB::FilterKernel filterKernel = FilterKernel("Designed Filter",
-                                                              FilterKernel::BPF,
-                                                              iFilterTabs,
-                                                              (double)dCenter/nyquistFrequency,
-                                                              (double)dBw/nyquistFrequency,
-                                                              (double)dTransWidth/nyquistFrequency,
-                                                              (double)dSFreq,
-                                                              dMethod);
-
+//    RTPROCESSINGLIB::FilterKernel filterKernel = FilterKernel("Designed Filter",
+//                                                              FilterKernel::BPF,
+//                                                              iFilterTabs,
+//                                                              (double)dCenter/nyquistFrequency,
+//                                                              (double)dBw/nyquistFrequency,
+//                                                              (double)dTransWidth/nyquistFrequency,
+//                                                              (double)dSFreq,
+//                                                              dMethod);
+    RTPROCESSINGLIB::FilterKernel filterKernel;
     FilterIO::readFilter(sFilterPath, filterKernel);
 
     Eigen::RowVectorXi lFilterChannelList;
-    for(int i = 0; i < pFiffInfo->chs.size(); ++i) {
+    for(int i = 0; i < pFiffInfoCompute->chs.size(); ++i) {
         if((pFiffInfo->chs.at(i).kind == FIFFV_MEG_CH || pFiffInfo->chs.at(i).kind == FIFFV_EEG_CH ||
             pFiffInfo->chs.at(i).kind == FIFFV_EOG_CH || pFiffInfo->chs.at(i).kind == FIFFV_ECG_CH ||
             pFiffInfo->chs.at(i).kind == FIFFV_EMG_CH)/* && !pFiffInfo->bads.contains(pFiffInfo->chs.at(i).ch_name)*/) {
@@ -949,8 +962,13 @@ int main(int argc, char *argv[])
                     pFwdSolution->sol = pComputeFwd->sol;                   // store results
                     pFwdSolution->sol_grad = pComputeFwd->sol_grad;
                     // cluster
-                    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, noiseCov/*fiffComputedCov*/)));
-                    forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
+                    // pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, noiseCov/*fiffComputedCov*/)));
+                    if(bDoCluster) {
+                        pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20, defaultD, noiseCov/*fiffComputedCov*/)));
+                        forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
+                    } else {
+                        forwardMeg = pFwdSolution->pick_types(true, false);             // only take meg solution
+                    }
                     vecTimeUpdate(i) = timer.elapsed();
 //                    if(!fiffComputedCov.isEmpty()) {
 //                    invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
@@ -961,10 +979,10 @@ int main(int argc, char *argv[])
 //                    }
 
                     invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                                                   forwardMeg,
-                                                                   noiseCov,
-                                                                   0.2f,
-                                                                   0.8f);
+                                               forwardMeg,
+                                               noiseCov,
+                                               0.2f,
+                                               0.8f);
                     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
     //                pRtInvOp->setFwdSolution(pFwdSolution);
     //                pRtInvOp->append(fiffComputedCov);
@@ -1026,7 +1044,7 @@ int main(int argc, char *argv[])
                     sourceEstimate.write(fileSTC);
                     QFile fileInvOp(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-inv.fif");
                     invOp.write(fileInvOp);
-                    IOUtils::write_eigen_matrix(currentEvoked.data, sCurrentDir + "/" + QString::number(i)  + "_" + sID + "evoked.txt");
+                    IOUtils::write_eigen_matrix(currentEvoked.data, sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-ave.txt");
                 }
             }
         }
@@ -1067,8 +1085,8 @@ int main(int argc, char *argv[])
 
     // write hpi results
     if(bDoLogging) {
-        QString sHPIFile = sID + "_hpi.txt";
-        QString sTimeFile = sID + "_updateTime.txt";
+        QString sHPIFile = sID + "-pos.txt";
+        QString sTimeFile = sID + "-updateTime.txt";
         IOUtils::write_eigen_matrix(matPosition, sCurrentDir + "/" + sHPIFile);
         IOUtils::write_eigen_matrix(vecTimeUpdate, sCurrentDir + "/" + sTimeFile);
     }
