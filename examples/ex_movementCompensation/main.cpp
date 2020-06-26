@@ -500,10 +500,12 @@ int main(int argc, char *argv[])
     QFile t_fileBemName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-5120-5120-5120-bem.fif");
     QFile t_fileSrcName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/bem/sample-oct-6-src.fif");
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
+    QFile t_fileCov(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis-cov.fif");
 
     QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/filterBPF.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
+
 
     QFile t_fileRaw(sRaw);
 
@@ -593,10 +595,13 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup Covariance
 
-    FiffCov fiffCov;
-    FiffCov fiffComputedCov;
+//    FiffCov fiffCov;
+//    FiffCov fiffComputedCov;
 
-    RTPROCESSINGLIB::RtCov rtCov(pFiffInfo);
+//    RTPROCESSINGLIB::RtCov rtCov(pFiffInfo);
+
+    FiffCov noiseCov(t_fileCov);
+    noiseCov = noiseCov.regularize(*pFiffInfoCompute.data(), 0.05, 0.05, 0.1, true);
 
     //=============================================================================================================
     // setup averaging
@@ -713,7 +718,7 @@ int main(int argc, char *argv[])
     Eigen::MatrixXd defaultD;       // default cluster operator
 
     pFwdSolution = MNEForwardSolution::SPtr(new MNEForwardSolution(t_fSolution));
-    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20,defaultD,fiffComputedCov)));
+    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20,defaultD,noiseCov/*fiffComputedCov*/)));
     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(pClusteredFwd->info));
 
     MNEForwardSolution forwardMeg = pClusteredFwd->pick_types(true, false);
@@ -727,7 +732,11 @@ int main(int argc, char *argv[])
 
     QString sAvrType = "3";
     RtInvOp::SPtr pRtInvOp = RtInvOp::SPtr(new RtInvOp(pFiffInfoCompute, pFwdSolution));
-    MNELIB::MNEInverseOperator invOp;
+    MNELIB::MNEInverseOperator invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
+                                                          forwardMeg,
+                                                          noiseCov,
+                                                          0.2f,
+                                                          0.8f);;
     FiffEvoked currentEvoked;
 
     FiffEvoked evoked;
@@ -940,16 +949,22 @@ int main(int argc, char *argv[])
                     pFwdSolution->sol = pComputeFwd->sol;                   // store results
                     pFwdSolution->sol_grad = pComputeFwd->sol_grad;
                     // cluster
-                    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, fiffComputedCov)));
+                    pClusteredFwd = MNEForwardSolution::SPtr(new MNEForwardSolution(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 200, defaultD, noiseCov/*fiffComputedCov*/)));
                     forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
                     vecTimeUpdate(i) = timer.elapsed();
-                    if(!fiffComputedCov.isEmpty()) {
+//                    if(!fiffComputedCov.isEmpty()) {
+//                    invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
+//                                               forwardMeg,
+//                                               fiffComputedCov,
+//                                               0.2f,
+//                                               0.8f);
+//                    }
+
                     invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                               forwardMeg,
-                                               fiffComputedCov,
-                                               0.2f,
-                                               0.8f);
-                    }
+                                                                   forwardMeg,
+                                                                   noiseCov,
+                                                                   0.2f,
+                                                                   0.8f);
                     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr(new FIFFLIB::FiffInfoBase(forwardMeg.info));       // update forward fiff info
     //                pRtInvOp->setFwdSolution(pFwdSolution);
     //                pRtInvOp->append(fiffComputedCov);
@@ -964,19 +979,19 @@ int main(int argc, char *argv[])
                                         list,
                                         lFilterChannelList);
 
-        // Covariance
-        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);        // updates once iEstimationSamples is exceeded
-        if(!fiffCov.names.isEmpty()) {
-            fiffComputedCov = fiffCov;
-//            pRtInvOp->append(fiffComputedCov);
-            m_qListCovChNames = fiffComputedCov.names;
-            invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                // create new inverse operator
-                                       forwardMeg,
-                                       fiffComputedCov,
-                                       0.2f,
-                                       0.8f);
-            qDebug() << "Covariance updated";
-        }
+//        // Covariance
+//        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);        // updates once iEstimationSamples is exceeded
+//        if(!fiffCov.names.isEmpty()) {
+//            fiffComputedCov = fiffCov;
+////            pRtInvOp->append(fiffComputedCov);
+//            m_qListCovChNames = fiffComputedCov.names;
+//            invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                // create new inverse operator
+//                                       forwardMeg,
+//                                       fiffComputedCov,
+//                                       0.2f,
+//                                       0.8f);
+//            qDebug() << "Covariance updated";
+//        }
 
         // averaging
         // Init the stim channels
@@ -991,7 +1006,7 @@ int main(int argc, char *argv[])
         lResponsibleTriggerTypes = m_lResponsibleTriggerTypes;
 
         // source estimate
-        if(evokedSet.evoked.size()>0 && !fiffComputedCov.names.isEmpty()) {
+        if(evokedSet.evoked.size()>0 && !noiseCov.names.isEmpty()) {
             // only if evoked and noise cov
             currentEvoked = evokedSet.evoked.at(0);
             FiffEvoked megEvoked = currentEvoked.pick_channels(pickedChannels);
@@ -1011,6 +1026,7 @@ int main(int argc, char *argv[])
                     sourceEstimate.write(fileSTC);
                     QFile fileInvOp(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-inv.fif");
                     invOp.write(fileInvOp);
+                    IOUtils::write_eigen_matrix(currentEvoked.data, sCurrentDir + "/" + QString::number(i)  + "_" + sID + "evoked.txt");
                 }
             }
         }
