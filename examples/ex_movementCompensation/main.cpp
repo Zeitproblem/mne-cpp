@@ -515,15 +515,15 @@ int main(int argc, char *argv[])
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
 
+    // load raw
     QFile t_fileRaw(sRaw);
-
-    FiffRawData rawData(t_fileRaw);
+    FiffRawData::SPtr pRawData = FiffRawData::SPtr::create(t_fileRaw);
     FiffRawData rawMeas(t_fileMeasName);
 
     // Setup compensators and projectors so they get applied while reading
     bool keep_comp = false;
     fiff_int_t dest_comp = 0;
-    MNE::setup_compensators(rawData,
+    MNE::setup_compensators(*pRawData.data(),
                             dest_comp,
                             keep_comp);
 
@@ -533,21 +533,21 @@ int main(int argc, char *argv[])
                      t_fileRaw.fileName(),
                      events);
 
-    QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
+    FiffInfo::SPtr pFiffInfo = FiffInfo::SPtr::create(pRawData->info);
 
     QStringList exclude;
-    exclude << rawData.info.bads << rawData.info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
+    exclude << pRawData->info.bads << pRawData->info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
 
     RowVectorXi vecPicks;
     // pick sensor types
     if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
-        vecPicks = rawData.info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("grad"),false,true,QStringList(),exclude);
     } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
-        vecPicks = rawData.info.pick_types(QString("mag"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("mag"),false,true,QStringList(),exclude);
     } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
-        vecPicks = rawData.info.pick_types(QString("all"),true,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),true,true,QStringList(),exclude);
     } else {
-        vecPicks = rawData.info.pick_types(QString("all"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),false,true,QStringList(),exclude);
     }
 
     FiffInfo::SPtr pFiffInfoCompute = QSharedPointer<FiffInfo>(new FiffInfo(pFiffInfo->pick_info(vecPicks)));
@@ -555,6 +555,7 @@ int main(int argc, char *argv[])
 
     double dSFreq = pFiffInfo->sfreq;
 
+    // further loading
     AnnotationSet::SPtr pAnnotationSet = AnnotationSet::SPtr(new AnnotationSet(sAtlasDir+"/lh.aparc.a2009s.annot", sAtlasDir+"/rh.aparc.a2009s.annot"));
     FiffCoordTrans mriHeadTrans(t_fileMriName); // mri <-> head transformation matrix
 
@@ -598,8 +599,8 @@ int main(int argc, char *argv[])
 
     fiff_int_t iQuantum = 200;              // Buffer size
     fiff_int_t from, to;
-    fiff_int_t first = rawData.first_samp;
-    fiff_int_t last = rawData.last_samp;
+    fiff_int_t first = pRawData->first_samp;
+    fiff_int_t last = pRawData->last_samp;
 
     int iN = ceil((last-first)/iQuantum);   // number of data segments
     VectorXd vecTime = RowVectorXd::LinSpaced(iN, 0, iN-1)*iQuantum;
@@ -778,25 +779,13 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup Filter
 
-    double dFromFreq = 1.0;
-    double dToFreq = 40.0;
-    double dTransWidth = 0.1;
-    double dBw = dToFreq-dFromFreq;
-    double dCenter = dFromFreq+dBw/2.0;
-    double nyquistFrequency = dSFreq/2.0;
-    int iFilterTabs = 128;
-    FilterKernel::DesignMethod dMethod = FilterKernel::Cosine;
     QScopedPointer<RTPROCESSINGLIB::Filter> pRtFilter(new RTPROCESSINGLIB::Filter());
-//    RTPROCESSINGLIB::FilterKernel filterKernel = FilterKernel("Designed Filter",
-//                                                              FilterKernel::BPF,
-//                                                              iFilterTabs,
-//                                                              (double)dCenter/nyquistFrequency,
-//                                                              (double)dBw/nyquistFrequency,
-//                                                              (double)dTransWidth/nyquistFrequency,
-//                                                              (double)dSFreq,
-//                                                              dMethod);
+
     RTPROCESSINGLIB::FilterKernel filterKernel;
     FilterIO::readFilter(sFilterPath, filterKernel);
+
+    QList<FilterKernel> lFilterKernel;
+    lFilterKernel << filterKernel;
 
     Eigen::RowVectorXi lFilterChannelList;
     for(int i = 0; i < pFiffInfoCompute->chs.size(); ++i) {
@@ -808,12 +797,30 @@ int main(int argc, char *argv[])
             lFilterChannelList[lFilterChannelList.cols()-1] = i;
         }
     }
+
+    // apply filter
+    QString sRawFilter = sRaw.remove("raw.fif") + "filt-raw.fif";
+    QFile fRawFilter(sRawFilter);
+
+    Filter rtFilter;
+    QList<FilterKernel> list;
+    //        list << filterKernel;
+
+    qInfo("Filtering...");
+    if(rtFilter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList)) {
+        qInfo("[done]\n");
+    } else {
+        qWarning("[failed]\n");
+    }
+
+    FiffRawData::SPtr pRawDataFiltered = FiffRawData::SPtr::create(fRawFilter);
+
     //=============================================================================================================
     // prepare writing
 
     RowVectorXd cals;
     QFile t_fileOut(QCoreApplication::applicationDirPath() + "/MNE-sample-data/test_filter_raw.fif");
-    FiffStream::SPtr outfid = FiffStream::start_writing_raw(t_fileOut, rawData.info,cals);
+    FiffStream::SPtr outfid = FiffStream::start_writing_raw(t_fileOut, pRawData->info,cals);
     MatrixXd matResultFiltered(lFilterChannelList.size(),last-first);
     bool first_buffer = true;
 
@@ -866,11 +873,11 @@ int main(int argc, char *argv[])
             stream << "Filter:" << "\n";
             stream << "Type: " << "BPF" << "\n";
             stream << "Method: " << "Cosine" << "\n";
-            stream << "From: " << dFromFreq << "\n";
-            stream << "To: " << dToFreq << "\n";
-            stream << "BandWith: " << dBw << "\n";
-            stream << "Transition band: " << dTransWidth << "\n";
-            stream << "Filter Tabs: " << iFilterTabs << "\n";
+            stream << "From: " << filterKernel.getLowpassFreq() << "\n";
+            stream << "To: " << filterKernel.getHighpassFreq() << "\n";
+            stream << "BandWith: " << filterKernel.getBandwidth() << "\n";
+            stream << "Transition band: " << filterKernel.getParksWidth() << "\n";
+            stream << "Filter Order: " << filterKernel.getFilterOrder() << "\n";
             stream << "\n";
             stream << "\n";
             stream << "Average Settings:" << "\n";
@@ -905,7 +912,7 @@ int main(int argc, char *argv[])
             qWarning() << "Block size < iQuantum " << iQuantum;
         }
         // Reading
-        if(!rawData.read_raw_segment(matData, matTimes, from, to)) {
+        if(!pRawData->read_raw_segment(matData, matTimes, from, to)) {
             qCritical("error during read_raw_segment");
             return -1;
         }
