@@ -96,9 +96,13 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("hpiFit Example");
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
-    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/MEG/sample/test_hpiFit_raw.fif");
+    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/raw/data_with_movement_chpi_raw.fif");
+    QCommandLineOption positionOption("filePos", "The .pos file containing the times to fit on.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_max_data_with_movement_chpi.txt");
+    QCommandLineOption outputOption("fileOut", "The output file to save the position file <out>.", "out", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/pos/pos_mne_data_with_movement_chpi.txt");
 
     parser.addOption(inputOption);
+    parser.addOption(positionOption);
+    parser.addOption(outputOption);
 
     parser.process(a);
 
@@ -124,18 +128,19 @@ int main(int argc, char *argv[])
     float fQuantumSec = 0.2f;       // read and write in 200 ms junks
     fiff_int_t iQuantum = ceil(fQuantumSec*pFiffInfo->sfreq);
 
-    // create time vector that specifies when to fit
-    float fTSec = 0.1;                              // time between hpi fits
-    int iQuantumT = floor(fTSec*pFiffInfo->sfreq);   // samples between fits
-    int iN = floor((last-first)/iQuantumT);
-    RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-1) * fTSec;
+//    // create time vector that specifies when to fit
+//    float fTSec = 0.1;                              // time between hpi fits
+//    int iQuantumT = floor(fTSec*pFiffInfo->sfreq);   // samples between fits
+//    int iN = floor((last-first)/iQuantumT);
+//    RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-1) * fTSec;
 
     // To fit at specific times outcommend the following block
     // Read Quaternion File
-//    MatrixXd matPos;
-//    qInfo() << "Specify the path to your Position file (.txt)";
-//    IOUtils::read_eigen_matrix(matPos, QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/Result/ref_hpiFit_pos.txt");
-//    RowVectorXd vecTime = matPos.col(0);
+    MatrixXd matPos;
+    qInfo() << "Specify the path to your Position file (.txt)";
+    QString sPos(parser.value(positionOption));
+    IOUtils::read_eigen_matrix(matPos, sPos);
+    RowVectorXd vecTime = matPos.col(0);
 
     MatrixXd matPosition;              // matPosition matrix to save quaternions etc.
 
@@ -168,7 +173,7 @@ int main(int argc, char *argv[])
     QString sHPIResourceDir = QCoreApplication::applicationDirPath() + "/HPIFittingDebug";
     bool bDoDebug = false;
 
-    HPIFit HPI = HPIFit(pFiffInfo);
+    HPIFit HPI = HPIFit(pFiffInfo,false);
 
     // ordering of frequencies
     from = first + vecTime(0)*pFiffInfo->sfreq;
@@ -181,15 +186,24 @@ int main(int argc, char *argv[])
 
     // order frequencies
     qInfo() << "Find Order...";
-    timer.start();
-    HPI.findOrder(matData,
-                  matProjectors,
-                  pFiffInfo->dev_head_t,
-                  vecFreqs,
-                  vecError,
-                  vecGoF,
-                  fittedPointSet,
-                  pFiffInfo);
+
+    bool bSorted = false;
+    FiffCoordTrans devHeadTransTemp = pFiffInfo->dev_head_t;
+    if(!bSorted) {
+        while(!bSorted) {
+            qDebug() << "order coils";
+            bSorted = HPI.findOrder(matData,
+                                    matProjectors,
+                                    devHeadTransTemp,
+                                    vecFreqs,
+                                    vecError,
+                                    vecGoF,
+                                    fittedPointSet,
+                                    pFiffInfo);
+        }
+        qDebug() << "Coil frequencies ordered: " << vecFreqs;
+    }
+
     qInfo() << "Ordered Frequencies: ";
     qInfo() << "findOrder() took" << timer.elapsed() << "milliseconds";
     qInfo() << "[done]";
@@ -235,5 +249,6 @@ int main(int argc, char *argv[])
             qInfo() << "dev_head_t has been updated.";
         }
     }
-    // IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/position.txt");
+    QString sPosOut(parser.value(outputOption));
+    IOUtils::write_eigen_matrix(matPosition, sPosOut);
 }
