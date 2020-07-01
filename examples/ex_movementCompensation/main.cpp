@@ -411,10 +411,11 @@ int main(int argc, char *argv[])
     QCommandLineOption coilTypeOption("coilType", "The coil <type> (for sensor level usage only), 'eeg', 'grad' or 'mag'.", "type", "grad");
     QCommandLineOption clustOption("cluster", "Do clustering of source space (for source level usage only).", "doClust", "true");
     QCommandLineOption sourceLocMethodOption("sourceLocMethod", "Inverse estimation <method> (for source level usage only), i.e., 'MNE', 'dSPM' or 'sLORETA'.", "method", "dSPM");
-    QCommandLineOption rawFileOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/simulate/sim-chpi-move-aud-raw.fif");
+    QCommandLineOption rawFileOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/simulation/sim-chpi-move-aud-raw.fif");
     QCommandLineOption logOption("log", "Log the computation and store results to file.", "bool", "true");
     QCommandLineOption logDirOption("logDir", "The directory to log the results.", "string", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/evaluation");
     QCommandLineOption idOption("id", "The id for the measurement", "id", "id");
+    QCommandLineOption eventsFileOption("events", "Path to the event <file>.", "file", QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/simulation/sim-aud-eve.fif");
 
     parser.addOption(writeOption);
     parser.addOption(moveCompOption);
@@ -429,6 +430,7 @@ int main(int argc, char *argv[])
     parser.addOption(logOption);
     parser.addOption(logDirOption);
     parser.addOption(idOption);
+    parser.addOption(eventsFileOption);
 
     parser.process(a);
 
@@ -437,6 +439,7 @@ int main(int argc, char *argv[])
 
     // Data Stream
     QString sRaw = parser.value(rawFileOption);
+    QString t_sEvent = parser.value(eventsFileOption);
 
     bool bWriteFilteredData = false;        // write filtered data to .fif
 
@@ -520,9 +523,15 @@ int main(int argc, char *argv[])
     // Setup compensators and projectors so they get applied while reading
     bool keep_comp = false;
     fiff_int_t dest_comp = 0;
-//    MNE::setup_compensators(rawData,
-//                            dest_comp,
-//                            keep_comp);
+    MNE::setup_compensators(rawData,
+                            dest_comp,
+                            keep_comp);
+
+    // Read the events
+    MatrixXi events;
+    MNE::read_events(t_sEvent,
+                     t_fileRaw.fileName(),
+                     events);
 
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(rawData.info));
 
@@ -593,7 +602,7 @@ int main(int argc, char *argv[])
     fiff_int_t last = rawData.last_samp;
 
     int iN = ceil((last-first)/iQuantum);   // number of data segments
-    MatrixXd vecTime = RowVectorXd::LinSpaced(iN, 0, iN-1)*iQuantum;
+    VectorXd vecTime = RowVectorXd::LinSpaced(iN, 0, iN-1)*iQuantum;
 
     Eigen::SparseMatrix<double> matSparseProjMult = updateProjectors(*(pFiffInfo.data()));
 
@@ -835,9 +844,7 @@ int main(int argc, char *argv[])
         QDir().mkdir(sCurrentDir);
         QString sLogFile = sID + "_LogFile.txt";
         QFile file(sCurrentDir + "/" + sLogFile);
-        qDebug() << file.fileName();
-        qDebug() << sLogFile;
-        qDebug() << sCurrentDir;
+
         if(file.open(QIODevice::WriteOnly|QIODevice::Truncate)) {
             QTextStream stream(&file);
             stream << "ex_movementCompensation" << "\n";
@@ -990,12 +997,12 @@ int main(int argc, char *argv[])
             }
         }
         // Filtering
-        matData = matSparseProjMult * matData;
-        QList<FilterKernel> list;
-        list << filterKernel;
-        matData = pRtFilter->filterData(matData,
-                                        list,
-                                        lFilterChannelList);
+//        matData = matSparseProjMult * matData;
+//        QList<FilterKernel> list;
+//        list << filterKernel;
+//        matData = pRtFilter->filterData(matData,
+//                                        list,
+//                                        lFilterChannelList);
 
 //        // Covariance
 //        fiffCov = rtCov.estimateCovariance(matData, iEstimationSamples);        // updates once iEstimationSamples is exceeded
