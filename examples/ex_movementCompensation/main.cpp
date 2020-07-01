@@ -512,17 +512,17 @@ int main(int argc, char *argv[])
     RowVectorXi vecPicks;
     // pick sensor types
     if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("grad"),false,false,QStringList(),exclude);
     } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("mag"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("mag"),false,false,QStringList(),exclude);
     } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("all"),true,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),true,false,QStringList(),exclude);
     } else {
-        vecPicks = pRawData->info.pick_types(QString("all"),false,true,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),false,false,QStringList(),exclude);
     }
 
     FiffInfo::SPtr pFiffInfoCompute = FiffInfo::SPtr::create(pFiffInfo->pick_info(vecPicks));
-    QStringList pickedChannels = pFiffInfoCompute->ch_names;
+    QStringList lPickedChannels = pFiffInfoCompute->ch_names;
 
     double dSFreq = pFiffInfo->sfreq;
 
@@ -645,15 +645,15 @@ int main(int argc, char *argv[])
     pClusteredFwd = MNEForwardSolution::SPtr::create(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20, defaultD, noiseCov));
     m_pFiffInfoForward = FIFFLIB::FiffInfoBase::SPtr::create(pClusteredFwd->info);
 
-    MNEForwardSolution forwardMeg;
+    MNEForwardSolution forwardCompute;
 
     if(bDoCluster) {
-        forwardMeg  = pClusteredFwd->pick_types(true, false);
+        forwardCompute  = pClusteredFwd->pick_channels(lPickedChannels);
     } else {
-        forwardMeg  = pFwdSolution->pick_types(true, false);
+        forwardCompute  = pFwdSolution->pick_channels(lPickedChannels);
     }
 
-    m_pFiffInfoForward = FiffInfoBase::SPtr::create(forwardMeg.info);       // forward fiff info
+    m_pFiffInfoForward = FiffInfoBase::SPtr::create(forwardCompute.info);       // forward fiff info
 
     // ToDo Plot in head space
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
@@ -664,7 +664,7 @@ int main(int argc, char *argv[])
 
     QString sAvrType = "3";
     MNEInverseOperator invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                                  forwardMeg,
+                                                  forwardCompute,
                                                   noiseCov,
                                                   0.2f,
                                                   0.8f);
@@ -681,11 +681,22 @@ int main(int argc, char *argv[])
     //=============================================================================================================
     // setup Filter
 
-    QScopedPointer<RTPROCESSINGLIB::Filter> pFilter(new RTPROCESSINGLIB::Filter());
-
-    RTPROCESSINGLIB::FilterKernel filterKernel;
-    FilterIO::readFilter(sFilterPath, filterKernel);
-
+    double dFromFreq = 1.0;
+    double dToFreq = 40.0;
+    double dTransWidth = 0.1;
+    double dBw = dToFreq-dFromFreq;
+    double dCenter = dFromFreq+dBw/2.0;
+    double nyquistFrequency = dSFreq/2.0;
+    int iFilterTabs = 4096;
+    FilterKernel::DesignMethod dMethod = FilterKernel::Cosine;
+    FilterKernel filterKernel = FilterKernel("Designed Filter",
+                                             FilterKernel::BPF,
+                                             iFilterTabs,
+                                             (double)dCenter/nyquistFrequency,
+                                             (double)dBw/nyquistFrequency,
+                                             (double)dTransWidth/nyquistFrequency,
+                                             (double)dSFreq,
+                                             dMethod);
     QList<FilterKernel> lFilterKernel;
     lFilterKernel << filterKernel;
 
@@ -704,11 +715,10 @@ int main(int argc, char *argv[])
     QString sRawFilter = sRaw.remove("raw.fif") + "filt-raw.fif";
     QFile fRawFilter(sRawFilter);
 
-    Filter rtFilter;
-    QList<FilterKernel> list;
+    Filter filter;
 
     qInfo("Filtering...");
-    if(rtFilter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList)) {
+    if(filter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList,true)) {
         qInfo("[done]\n");
     } else {
         qWarning("[failed]\n");
@@ -720,27 +730,30 @@ int main(int argc, char *argv[])
     RowVectorXi vecPicksFiltered;
     // pick sensor types
     if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("grad"),false,false,QStringList(),exclude);
     } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("mag"),false,true,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("mag"),false,false,QStringList(),exclude);
     } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),true,true,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),true,false,QStringList(),exclude);
     } else {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),false,true,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),false,false,QStringList(),exclude);
     }
 
     //=============================================================================================================
-    // read epochs
+    // extract epochs
 
+    // Define time course to estimate
     float fTMin = 0;
     float fTMax = 125 / dSFreq;
     float fTBase = 100 / dSFreq;
+
     // Read the events
     MatrixXi matEvents;
     MNE::read_events(fileEvent,
                      matEvents);
 
     fiff_int_t iEventID = 3;
+
     // Read the epochs and reject epochs with EOG higher than 300e-06
     QMap<QString,double> mapReject;
     mapReject.insert("eog", 100e-06);
@@ -777,8 +790,6 @@ int main(int argc, char *argv[])
     MatrixXd epochCurrent;
     m_pFiffInfoInput = FiffInfo::SPtr::create(pRawDataFiltered->info);
 
-    a.exec();
-
     //=============================================================================================================
     // Logging
 
@@ -789,7 +800,7 @@ int main(int argc, char *argv[])
     qInfo() << "Movement compensation: " << bDoHeadPosUpdate;
     qInfo() << "Maximum rotation: " << dAllowedRotation;
     qInfo() << "Maximum displacement" << dAllowedMovement;
-    qInfo() << "Clustered Sources" << forwardMeg.nsource;
+    qInfo() << "Clustered Sources" << forwardCompute.nsource;
     qInfo() << "-------------------------------------------------------------------------------------------------";
 
     QString sCurrentDir;
@@ -846,7 +857,7 @@ int main(int argc, char *argv[])
             stream << "Source Space:" << "\n";
             stream << "Number Spaces: " << pFwdSolution->src.size() << "\n";
             stream << "Number Sources: " << pFwdSolution->nsource << "\n";
-            stream << "Number Sources Clustered: " << pFwdSolution->nsource << "\n";
+            stream << "Number Sources Clustered: " << pClusteredFwd->nsource << "\n";
             stream << "\n";
             stream << "\n";
             stream << "HPI:" << "\n";
@@ -854,7 +865,7 @@ int main(int argc, char *argv[])
             stream << "Frequencies: ";
             QVectorIterator<int> itFreqs(vecFreqs);
             while (itFreqs.hasNext()) {
-                stream << itFreqs.next();
+                stream << itFreqs.next() << ",";
             }
             stream << "\n";
         }
@@ -943,14 +954,14 @@ int main(int argc, char *argv[])
                     // cluster
                     if(bDoCluster) {
                         pClusteredFwd = MNEForwardSolution::SPtr::create(pFwdSolution->cluster_forward_solution(*pAnnotationSet.data(), 20, defaultD, noiseCov));
-                        forwardMeg = pClusteredFwd->pick_types(true, false);            // only take meg solution
+                        forwardCompute = pClusteredFwd->pick_channels(lPickedChannels);
                     } else {
-                        forwardMeg = pFwdSolution->pick_types(true, false);             // only take meg solution
+                        forwardCompute = pFwdSolution->pick_channels(lPickedChannels);
                     }
                     vecTimeUpdate(i) = timer.elapsed();
 
                     invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                               forwardMeg,
+                                               forwardCompute,
                                                noiseCov,
                                                0.2f,
                                                0.8f);
@@ -960,7 +971,10 @@ int main(int argc, char *argv[])
 
         // source estimate
         epochCurrent = epochData[i]->epoch;
+
         MinimumNorm minimumNorm(invOp, fLambda2, sMethod);
+        minimumNorm.doInverseSetup(1, false);
+
         MNESourceEstimate sourceEstimate = minimumNorm.calculateInverse(epochCurrent,0.0f,fTStep,true);
 
         if(!sourceEstimate.isEmpty()) {
@@ -978,7 +992,7 @@ int main(int argc, char *argv[])
     if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
                                                                    "left auditory",
                                                                    sourceEstimate,
-                                                                   forwardMeg,
+                                                                   forwardCompute,
                                                                    *pSurfaceSet.data(),
                                                                    *pAnnotationSet.data())) {
         pRTDataItem->setLoopState(true);
