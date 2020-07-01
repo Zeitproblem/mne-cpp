@@ -439,7 +439,7 @@ int main(int argc, char *argv[])
 
     // Data Stream
     QString sRaw = parser.value(rawFileOption);
-    QString t_sEvent = parser.value(eventsFileOption);
+    QFile fileEvent(parser.value(eventsFileOption));
 
     bool bWriteFilteredData = false;        // write filtered data to .fif
 
@@ -511,13 +511,13 @@ int main(int argc, char *argv[])
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
     QFile t_fileCov(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis-cov.fif");
 
-    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/BPF_0_40_Fs600.txt");
+    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/simulation/BPF_1_40_Fs600.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
 
     // load raw
-    QFile t_fileRaw(sRaw);
-    FiffRawData::SPtr pRawData = FiffRawData::SPtr::create(t_fileRaw);
+    QFile fileRaw(sRaw);
+    FiffRawData::SPtr pRawData = FiffRawData::SPtr::create(fileRaw);
     FiffRawData rawMeas(t_fileMeasName);
 
     // Setup compensators and projectors so they get applied while reading
@@ -526,12 +526,6 @@ int main(int argc, char *argv[])
     MNE::setup_compensators(*pRawData.data(),
                             dest_comp,
                             keep_comp);
-
-    // Read the events
-    MatrixXi events;
-    MNE::read_events(t_sEvent,
-                     t_fileRaw.fileName(),
-                     events);
 
     FiffInfo::SPtr pFiffInfo = FiffInfo::SPtr::create(pRawData->info);
 
@@ -573,10 +567,10 @@ int main(int argc, char *argv[])
     MNEBem t_BemHeadAvr(t_fileHeadAvr);
     m_pBemHeadAvr = m_p3DDataModel->addBemData("Subject", "Average head", t_BemHeadAvr);
 
-    FiffDigPointSet digSet(t_fileRaw);
+    FiffDigPointSet digSet(fileRaw);
     FiffDigPointSet digSetWithoutAdditional = digSet.pickTypes(QList<int>()<<FIFFV_POINT_HPI<<FIFFV_POINT_CARDINAL<<FIFFV_POINT_EEG);
     m_pTrackedDigitizer = m_p3DDataModel->addDigitizerData("Subject","Tracked Digitizers",digSetWithoutAdditional);
-    alignFiducials(t_fileRaw.fileName());
+    alignFiducials(fileRaw.fileName());
 
     SurfaceSet::SPtr pSurfaceSet = SurfaceSet::SPtr(new SurfaceSet(sSurfaceDir+"/lh.orig", sSurfaceDir+"/rh.orig"));
     m_p3DDataModel->addSurfaceSet("Subject", "MRI", *pSurfaceSet.data(), *pAnnotationSet.data());
@@ -703,6 +697,7 @@ int main(int argc, char *argv[])
     if(!bDoHeadPosUpdate) {
         vecTimeUpdate.fill(0);
     }
+
     ComputeFwdSettings::SPtr pFwdSettings = ComputeFwdSettings::SPtr(new ComputeFwdSettings);
     pFwdSettings->solname = QCoreApplication::applicationDirPath() + "/MNE-sample-data/your-solution-fwd.fif";
     pFwdSettings->mriname = t_fileMriName.fileName();
@@ -742,7 +737,6 @@ int main(int argc, char *argv[])
         forwardMeg  = pClusteredFwd->pick_types(true, false);
     } else {
         forwardMeg  = pFwdSolution->pick_types(true, false);
-        qDebug() << "Don't using the clustered version.";
     }
 
     // ToDo Plot in head space
@@ -804,7 +798,6 @@ int main(int argc, char *argv[])
 
     Filter rtFilter;
     QList<FilterKernel> list;
-    //        list << filterKernel;
 
     qInfo("Filtering...");
     if(rtFilter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList)) {
@@ -813,8 +806,66 @@ int main(int argc, char *argv[])
         qWarning("[failed]\n");
     }
 
+    // read filtered file
     FiffRawData::SPtr pRawDataFiltered = FiffRawData::SPtr::create(fRawFilter);
 
+    RowVectorXi vecPicksFiltered;
+    // pick sensor types
+    if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("grad"),false,true,QStringList(),exclude);
+    } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("mag"),false,true,QStringList(),exclude);
+    } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),true,true,QStringList(),exclude);
+    } else {
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),false,true,QStringList(),exclude);
+    }
+
+    //=============================================================================================================
+    // read epochs
+
+    float fTMin = 0;
+    float fTMax = 125 / dSFreq;
+    float fTBase = 100 / dSFreq;
+    // Read the events
+    MatrixXi matEvents;
+    MNE::read_events(fileEvent,
+                     matEvents);
+
+    fiff_int_t iEventID = 3;
+    // Read the epochs and reject epochs with EOG higher than 300e-06
+    QMap<QString,double> mapReject;
+    mapReject.insert("eog", 100e-06);
+
+    MNEEpochDataList epochData = MNEEpochDataList::readEpochs(*pRawDataFiltered.data(),
+                                                              matEvents,
+                                                              fTMin,
+                                                              fTMax,
+                                                              iEventID,
+                                                              mapReject,
+                                                              QStringList(),
+                                                              vecPicksFiltered);
+
+    // Drop rejected epochs
+    MatrixXi matEventsCleaned;
+
+    QMutableListIterator<MNEEpochData::SPtr> iter(epochData);
+    qint8 i = 0;
+    while (iter.hasNext()) {
+        if (!iter.next()->bReject) {
+            matEventsCleaned.conservativeResize(matEventsCleaned.rows()+1, matEvents.cols());
+            matEventsCleaned.row(i) = matEvents.row(i);
+        }
+        i = i + 1;
+    }
+
+    epochData.dropRejected();
+
+    // apply baseline coorection
+    QPair<QVariant, QVariant> pairBaseline(QVariant("0.0"), QVariant(100/fTBase));
+    epochData.applyBaselineCorrection(pairBaseline);
+
+    a.exec();
     //=============================================================================================================
     // prepare writing
 
@@ -857,6 +908,7 @@ int main(int argc, char *argv[])
             stream << "ex_movementCompensation" << "\n";
             stream << " --id " << sID << "\n";
             stream << " --fileIn " << sRaw << "\n";
+            stream << " --matEvents " << fileEvent.fileName() << "\n";
             stream << " --log " << bDoLogging << "\n";
             stream << " --logDir " << sLogDir << "\n";
             stream << " --write " << bWriteFilteredData << "\n";
@@ -899,6 +951,8 @@ int main(int argc, char *argv[])
             stream << "Number coils: " << vecFreqs.size() << "\n";
         }
     }
+
+
 
     //=============================================================================================================
     // actual pipeline
