@@ -659,6 +659,8 @@ int main(int argc, char *argv[])
     QList<SourceSpaceTreeItem*> pSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ClusteredForwardSolution", *pClusteredFwd);
     QList<SourceSpaceTreeItem*> pClusteredSourceSpaceItem = m_p3DDataModel->addForwardSolution("Subject", "ForwardSolution", *pFwdSolution);
 
+    int iNVertLh = forwardCompute.src[0].vertno.size();
+
     //=============================================================================================================
     // setup MNE source estimate
 
@@ -712,17 +714,17 @@ int main(int argc, char *argv[])
     }
 
     // apply filter
-    QString sRawFilter = sRaw.remove("raw.fif") + "filt-raw.fif";
+    QString sRawFilter = sRaw;
+    sRawFilter = sRawFilter.remove("raw.fif") + "filtChpi-raw.fif";
     QFile fRawFilter(sRawFilter);
-
     Filter filter;
 
-    qInfo("Filtering...");
-    if(filter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList,true)) {
-        qInfo("[done]\n");
-    } else {
-        qWarning("[failed]\n");
-    }
+//    qInfo("Filtering...");
+//    if(filter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList,true)) {
+//        qInfo("[done]\n");
+//    } else {
+//        qWarning("[failed]\n");
+//    }
 
     // read filtered file
     FiffRawData::SPtr pRawDataFiltered = FiffRawData::SPtr::create(fRawFilter);
@@ -744,7 +746,7 @@ int main(int argc, char *argv[])
 
     // Define time course to estimate
     float fTMin = 0;
-    float fTMax = 125 / dSFreq;
+    float fTMax = 200 / dSFreq;
     float fTBase = 100 / dSFreq;
 
     // Read the events
@@ -784,8 +786,8 @@ int main(int argc, char *argv[])
     epochData.dropRejected();
 
     // apply baseline coorection
-    QPair<QVariant, QVariant> pairBaseline(QVariant("0.0"), QVariant(100/fTBase));
-    epochData.applyBaselineCorrection(pairBaseline);
+    QPair<QVariant, QVariant> pairBaseline(QVariant("0.0"), QVariant(fTBase));
+//    epochData.applyBaselineCorrection(pairBaseline);
 
     MatrixXd epochCurrent;
     m_pFiffInfoInput = FiffInfo::SPtr::create(pRawDataFiltered->info);
@@ -822,7 +824,7 @@ int main(int argc, char *argv[])
             stream << "ex_movementCompensation" << "\n";
             stream << " --id " << sID << "\n";
             stream << " --fileIn " << sRaw << "\n";
-            stream << " --matEvents " << fileEvent.fileName() << "\n";
+            stream << " --events " << fileEvent.fileName() << "\n";
             stream << " --log " << bDoLogging << "\n";
             stream << " --logDir " << sLogDir << "\n";
             stream << " --sourceLocMethod " << sMethod << "\n";
@@ -981,8 +983,13 @@ int main(int argc, char *argv[])
 //                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
 //                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
             if(bDoLogging) {
-                QFile fileSTC(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-vol.stc");
-                sourceEstimate.write(fileSTC);
+                MNESourceEstimate sourceEstimateLH = MNESourceEstimate(sourceEstimate.data.block(0,0,iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(0,iNVertLh), 0, fTStep);
+                MNESourceEstimate sourceEstimateRH = MNESourceEstimate(sourceEstimate.data.block(iNVertLh,0,sourceEstimate.data.rows()-iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(iNVertLh,sourceEstimate.vertices.size()-iNVertLh), 0, fTStep);
+
+                QFile fileStcLh(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-lh.stc");
+                sourceEstimateLH.write(fileStcLh);
+                QFile fileStcRH(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-rh.stc");
+                sourceEstimateRH.write(fileStcRH);
                 IOUtils::write_eigen_matrix(epochCurrent, sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-epoch.txt");
             }
         }
