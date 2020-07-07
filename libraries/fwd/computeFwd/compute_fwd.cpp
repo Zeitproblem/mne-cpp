@@ -1591,11 +1591,13 @@ bool write_solution(const QString& name,         /* Destination file */
         if (bDoGrad) {
             meg_solution_grad.transpose_named_matrix();
             t_pStream->write_named_matrix(FIFF_MNE_FORWARD_SOLUTION_GRAD,meg_solution_grad);
-        }
+            meg_solution_grad.transpose_named_matrix();
 
+        }
 //            if (mne_write_named_matrix(t_pStream,FIFF_MNE_FORWARD_SOLUTION_GRAD,meg_solution_grad) == FIFF_FAIL)
 //                goto bad;
         t_pStream->end_block(FIFFB_MNE_FORWARD_SOLUTION);
+        meg_solution.transpose_named_matrix();
     }
     /*
      * EEG forward solution
@@ -1616,12 +1618,14 @@ bool write_solution(const QString& name,         /* Destination file */
 //        if (mne_write_named_matrix(t_pStream,FIFF_MNE_FORWARD_SOLUTION,eeg_solution) == FIFF_FAIL)
 //            goto bad;
         if (bDoGrad) {
+            eeg_solution_grad.transpose_named_matrix();
             t_pStream->write_named_matrix(FIFF_MNE_FORWARD_SOLUTION_GRAD,eeg_solution_grad);
+            eeg_solution_grad.transpose_named_matrix();
         }
 //            if (mne_write_named_matrix(t_pStream,FIFF_MNE_FORWARD_SOLUTION_GRAD,eeg_solution_grad) == FIFF_FAIL)
 //                goto bad;
-
         t_pStream->end_block(FIFFB_MNE_FORWARD_SOLUTION);
+        eeg_solution.transpose_named_matrix();
     }
 
     t_pStream->end_block(FIFFB_MNE);
@@ -2438,6 +2442,8 @@ void ComputeFwd::updateHeadPos(FiffCoordTransOld* transDevHeadOld)
         }
     }
 
+    qWarning() << "Before update: " << m_meg_forward->nrow << "x" << m_meg_forward->ncol;
+
     // recompute meg forward
     if ((FwdBemModel::compute_forward_meg(m_spaces,
                                           m_iNSpace,
@@ -2454,6 +2460,8 @@ void ComputeFwd::updateHeadPos(FiffCoordTransOld* transDevHeadOld)
         return;
     }
 
+    qWarning() << "After update: " << m_meg_forward->nrow << "x" << m_meg_forward->ncol;
+
     // Update new Transformation Matrix
     m_meg_head_t = new FiffCoordTransOld(*transDevHeadOld);
     // update solution
@@ -2465,7 +2473,7 @@ void ComputeFwd::updateHeadPos(FiffCoordTransOld* transDevHeadOld)
 
 //=========================================================================================================
 
-void ComputeFwd::storeFwd()
+void ComputeFwd::storeFwd(QString sSolName)
 {
     // We are ready to spill it out
     // Transform the source spaces back into MRI coordinates
@@ -2476,8 +2484,13 @@ void ComputeFwd::storeFwd()
     int iNMeg = m_megcoils->ncoil;
     int iNEeg = m_eegels->ncoil;
 
-    printf("\nwriting %s...",m_pSettings->solname.toUtf8().constData());
-    if (!write_solution(m_pSettings->solname,                   /* Destination file */
+    if(sSolName == "default") {
+        sSolName = m_pSettings->solname;
+    }
+
+    printf("\nwriting %s...",sSolName.toUtf8().constData());
+
+    if (!write_solution(sSolName,                               /* Destination file */
                         m_spaces,                               /* The source spaces */
                         m_iNSpace,
                         m_pSettings->mriname,m_mri_id,          /* MRI file and data obtained from there */
@@ -2498,7 +2511,7 @@ void ComputeFwd::storeFwd()
         return;
     }
 
-    if (!mne_attach_env(m_pSettings->solname,m_pSettings->command)) {
+    if (!mne_attach_env(sSolName,m_pSettings->command)) {
         return;
     }
     printf("done\n");

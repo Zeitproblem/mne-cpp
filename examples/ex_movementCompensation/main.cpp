@@ -92,9 +92,9 @@
 #include <mne/mne.h>
 
 #include <rtprocessing/filter.h>
-#include <rtprocessing/helpers/filterio.h>
+#include <rtprocessing/helpers/filterkernel.h>
+
 #include <rtprocessing/rtcov.h>
-#include <rtprocessing/rtave.h>
 #include <rtprocessing/rtinvop.h>
 
 //=============================================================================================================
@@ -277,7 +277,6 @@ Eigen::SparseMatrix<double> updateProjectors(FiffInfo infoTemp) {
 
 bool calcFiffInfo()
 {
-
     if(m_qListCovChNames.size() > 0 && m_pFiffInfoInput && m_pFiffInfoForward) {
         qDebug() << "[RtcMne::calcFiffInfoFiff] Infos available";
 
@@ -486,7 +485,6 @@ int main(int argc, char *argv[])
     QFile t_fileMeasName(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis_raw.fif");
     QFile t_fileCov(QCoreApplication::applicationDirPath() + "/MNE-sample-data/MEG/sample/sample_audvis-cov.fif");
 
-    QString sFilterPath(QCoreApplication::applicationDirPath() + "/MNE-sample-data/chpi/simulation/BPF_1_40_Fs600.txt");
     QString sAtlasDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/label");
     QString sSurfaceDir(QCoreApplication::applicationDirPath() + "/MNE-sample-data/subjects/sample/surf");
 
@@ -506,19 +504,19 @@ int main(int argc, char *argv[])
 
     FiffInfo::SPtr pFiffInfo = FiffInfo::SPtr::create(pRawData->info);
 
-    QStringList exclude;
-    exclude << pRawData->info.bads << pRawData->info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
+    QStringList lExclude;
+    lExclude << pRawData->info.bads << pRawData->info.ch_names.filter("EOG") << "MEG2641" << "MEG2443" << "EEG053";
 
     RowVectorXi vecPicks;
     // pick sensor types
     if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("grad"),false,false,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("grad"),false,false,QStringList(),lExclude);
     } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("mag"),false,false,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("mag"),false,false,QStringList(),lExclude);
     } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
-        vecPicks = pRawData->info.pick_types(QString("all"),true,false,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),true,false,QStringList(),lExclude);
     } else {
-        vecPicks = pRawData->info.pick_types(QString("all"),false,false,QStringList(),exclude);
+        vecPicks = pRawData->info.pick_types(QString("all"),false,false,QStringList(),lExclude);
     }
 
     FiffInfo::SPtr pFiffInfoCompute = FiffInfo::SPtr::create(pFiffInfo->pick_info(vecPicks));
@@ -671,12 +669,15 @@ int main(int argc, char *argv[])
                                                   0.2f,
                                                   0.8f);
     qint32 j;
-    int iTimePointSps = 0.187*dSFreq;
+    int iTimePointSps = 0.111*dSFreq;
     int iNumberChannels = 0;
     int iDownSample = 1;
     float fTStep = 1 / dSFreq;
-    float fLambda2 = 1.0f / pow(3.0f, 2); //ToDo estimate lambda using covariance
+    float fLambda2 = 1.0f / pow(3.0f, 2);
+
     MNESourceEstimate sourceEstimate;
+    MinimumNorm::SPtr pMinimumNorm = MinimumNorm::SPtr::create(invOp,fLambda2,sMethod);
+
     QStringList lChNamesFiffInfo;
     QStringList lChNamesInvOp;
 
@@ -716,38 +717,37 @@ int main(int argc, char *argv[])
     // apply filter
     QString sRawFilter = sRaw;
     sRawFilter = sRawFilter.remove("raw.fif") + "filtChpi-raw.fif";
-    QFile fRawFilter(sRawFilter);
-    Filter filter;
+    QFile fileRawFilter(sRawFilter);
 
 //    qInfo("Filtering...");
-//    if(filter.filterFile(fRawFilter,pRawData,lFilterKernel,lFilterChannelList,true)) {
+//    if(RTPROCESSINGLIB::filterFile(fileRawFilter,pRawData,filterKernel,lFilterChannelList,true)) {
 //        qInfo("[done]\n");
 //    } else {
 //        qWarning("[failed]\n");
 //    }
 
     // read filtered file
-    FiffRawData::SPtr pRawDataFiltered = FiffRawData::SPtr::create(fRawFilter);
+    FiffRawData::SPtr pRawDataFiltered = FiffRawData::SPtr::create(fileRawFilter);
 
     RowVectorXi vecPicksFiltered;
     // pick sensor types
     if(sCoilType.contains("grad", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("grad"),false,false,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("grad"),false,false,QStringList(),lExclude);
     } else if (sCoilType.contains("mag", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("mag"),false,false,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("mag"),false,false,QStringList(),lExclude);
     } else if (sCoilType.contains("eeg", Qt::CaseInsensitive)) {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),true,false,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),true,false,QStringList(),lExclude);
     } else {
-        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),false,false,QStringList(),exclude);
+        vecPicksFiltered = pRawDataFiltered->info.pick_types(QString("all"),false,false,QStringList(),lExclude);
     }
 
     //=============================================================================================================
     // extract epochs
 
     // Define time course to estimate
-    float fTMin = 0;
-    float fTMax = 200 / dSFreq;
-    float fTBase = 100 / dSFreq;
+    float fTMin = -0.1;
+    float fTMax = 0.3;
+    float fTBase = 0.0;
 
     // Read the events
     MatrixXi matEvents;
@@ -758,7 +758,9 @@ int main(int argc, char *argv[])
 
     // Read the epochs and reject epochs with EOG higher than 300e-06
     QMap<QString,double> mapReject;
-    mapReject.insert("eog", 100e-06);
+    mapReject.insert("eog", 150e-06);
+    mapReject.insert("grad", 4000e-13);
+    mapReject.insert("mag", 4e-12);
 
     MNEEpochDataList epochData = MNEEpochDataList::readEpochs(*pRawDataFiltered.data(),
                                                               matEvents,
@@ -766,32 +768,59 @@ int main(int argc, char *argv[])
                                                               fTMax,
                                                               iEventID,
                                                               mapReject,
-                                                              QStringList(),
+                                                              lExclude,
                                                               vecPicksFiltered);
 
     // Drop rejected epochs
     MatrixXi matEventsCleaned;
 
-    QMutableListIterator<MNEEpochData::SPtr> iter(epochData);
-
-    qint8 i = 0;
-    while (iter.hasNext()) {
-        if (!iter.next()->bReject) {
+    for(int i = 0; i < epochData.length(); ++i) {
+        if (!epochData.at(i)->bReject) {
             matEventsCleaned.conservativeResize(matEventsCleaned.rows()+1, matEvents.cols());
-            matEventsCleaned.row(i) = matEvents.row(i);
+            matEventsCleaned.row(matEventsCleaned.rows()-1) = matEvents.row(i);
         }
-        i = i + 1;
     }
 
     epochData.dropRejected();
 
     // apply baseline coorection
-    QPair<QVariant, QVariant> pairBaseline(QVariant("0.0"), QVariant(fTBase));
-//    epochData.applyBaselineCorrection(pairBaseline);
+    QPair<float, float> pairBaseline(fTMin, fTBase);
+    epochData.applyBaselineCorrection(pairBaseline);
 
     MatrixXd epochCurrent;
     m_pFiffInfoInput = FiffInfo::SPtr::create(pRawDataFiltered->info);
 
+    // ready
+    FiffEvoked evoked = epochData.average(pRawDataFiltered->info,
+                                          0,
+                                          epochData.first()->epoch.cols()-1);
+
+    pMinimumNorm = MinimumNorm::SPtr::create(invOp, fLambda2, sMethod);
+    pMinimumNorm->doInverseSetup(epochData.length(), false);
+
+    sourceEstimate = pMinimumNorm->calculateInverse(evoked.data,0.0f,fTStep,true);
+    sourceEstimate = sourceEstimate.reduce(67,1);
+
+    if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
+                                                                     "left auditory",
+                                                                     sourceEstimate,
+                                                                     forwardCompute,
+                                                                     *pSurfaceSet.data(),
+                                                                     *pAnnotationSet.data())) {
+        pRTDataItem->setLoopState(true);
+        pRTDataItem->setTimeInterval(17);
+        pRTDataItem->setNumberAverages(epochData.length());
+        pRTDataItem->setStreamingState(true);
+        pRTDataItem->setThresholds(QVector3D(0.0,0.5,10.0));
+        pRTDataItem->setVisualizationType("Interpolation based");
+        pRTDataItem->setColormapType("Hot");
+        pRTDataItem->setAlpha(0.75f);
+        pRTDataItem->setTransform(mriHeadTrans);
+        pRTDataItem->applyTransform(fitResult.devHeadTrans,true);
+    }
+    qDebug() << sID;
+    p3DAbstractView->show();
+    a.exec();
     //=============================================================================================================
     // Logging
 
@@ -802,7 +831,7 @@ int main(int argc, char *argv[])
     qInfo() << "Movement compensation: " << bDoHeadPosUpdate;
     qInfo() << "Maximum rotation: " << dAllowedRotation;
     qInfo() << "Maximum displacement" << dAllowedMovement;
-    qInfo() << "Clustered Sources" << forwardCompute.nsource;
+    qInfo() << "Sources" << forwardCompute.nsource;
     qInfo() << "-------------------------------------------------------------------------------------------------";
 
     QString sCurrentDir;
@@ -816,6 +845,9 @@ int main(int argc, char *argv[])
 
         sCurrentDir = sLogDir + "/" + sTimeStamp + "_" + sID;
         QDir().mkdir(sCurrentDir);
+
+        pComputeFwd->storeFwd(sCurrentDir + "/" + "sim-aud-" + sCoilType + "-fwd.fif");
+
         QString sLogFile = sID + "_LogFile.txt";
         QFile file(sCurrentDir + "/" + sLogFile);
 
@@ -871,9 +903,8 @@ int main(int argc, char *argv[])
             }
             stream << "\n";
         }
+        file.close();
     }
-
-
 
     //=============================================================================================================
     // actual pipeline
@@ -881,7 +912,7 @@ int main(int argc, char *argv[])
     calcFiffInfo();     // prepare fiff info from different objects
 
     QElapsedTimer timer;
-    for(int i = 0; i < matEventsCleaned.rows(); i++) {
+    for(int i = 0; i < matEvents.rows(); i++) {
         from = matEventsCleaned(i,0);
         to = from + iQuantum;
         if (to > last) {
@@ -927,7 +958,7 @@ int main(int argc, char *argv[])
 
             // update head position if good fit
             if(dMeanErrorDist < dErrorMax) {
-                HPIFit::storeHeadPosition(first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
+                HPIFit::storeHeadPosition((float)first/pFiffInfo->sfreq, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
 
                 // update 3D View (not working yet)
                 update3DView(fitResult);
@@ -942,8 +973,8 @@ int main(int argc, char *argv[])
                 } else {
                     fitResult.bIsLargeHeadMovement = false;
                 }
+                fitResult.bIsLargeHeadMovement = true;
             }
-
             // update Forward solution
             if(bDoHeadPosUpdate) {
                 if(fitResult.bIsLargeHeadMovement) {
@@ -962,59 +993,42 @@ int main(int argc, char *argv[])
                     }
                     vecTimeUpdate(i) = timer.elapsed();
 
-                    invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
-                                               forwardCompute,
-                                               noiseCov,
-                                               0.2f,
-                                               0.8f);
+//                    invOp = MNEInverseOperator(*pFiffInfoCompute.data(),                   // create new inverse operator
+//                                               forwardCompute,
+//                                               noiseCov,
+//                                               0.2f,
+//                                               0.8f);
                 }
             }
-        }
-
-        // source estimate
-        epochCurrent = epochData[i]->epoch;
-
-        MinimumNorm minimumNorm(invOp, fLambda2, sMethod);
-        minimumNorm.doInverseSetup(1, false);
-
-        MNESourceEstimate sourceEstimate = minimumNorm.calculateInverse(epochCurrent,0.0f,fTStep,true);
-
-        if(!sourceEstimate.isEmpty()) {
-//                std::cout << "\nsourceEstimate:\n" << sourceEstimate.data.block(0,0,10,10) << std::endl;
-//                qDebug() << sourceEstimate.data.rows() << "x" << sourceEstimate.data.cols();
             if(bDoLogging) {
-                MNESourceEstimate sourceEstimateLH = MNESourceEstimate(sourceEstimate.data.block(0,0,iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(0,iNVertLh), 0, fTStep);
-                MNESourceEstimate sourceEstimateRH = MNESourceEstimate(sourceEstimate.data.block(iNVertLh,0,sourceEstimate.data.rows()-iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(iNVertLh,sourceEstimate.vertices.size()-iNVertLh), 0, fTStep);
+                QString sTimeStamp = QDateTime::currentDateTime().toString("yyMMdd_hhmmss");
 
-                QFile fileStcLh(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-lh.stc");
-                sourceEstimateLH.write(fileStcLh);
-                QFile fileStcRH(sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-rh.stc");
-                sourceEstimateRH.write(fileStcRH);
-                IOUtils::write_eigen_matrix(epochCurrent, sCurrentDir + "/" + QString::number(i)  + "_" + sID + "-epoch.txt");
+                QString sSolName = sCurrentDir + "/" + sTimeStamp + "_" + sID + "-fwd.fif";
+                pComputeFwd->storeFwd(sSolName);
             }
         }
-    }
 
-    // ready
-    if(MneDataTreeItem* pRTDataItem = m_p3DDataModel->addSourceData("Subject",
-                                                                   "left auditory",
-                                                                   sourceEstimate,
-                                                                   forwardCompute,
-                                                                   *pSurfaceSet.data(),
-                                                                   *pAnnotationSet.data())) {
-        pRTDataItem->setLoopState(true);
-        pRTDataItem->setTimeInterval(17);
-        pRTDataItem->setNumberAverages(1);
-        pRTDataItem->setStreamingState(true);
-        pRTDataItem->setThresholds(QVector3D(0.0,0.5,10.0));
-        pRTDataItem->setVisualizationType("Interpolation based");
-        pRTDataItem->setColormapType("Hot");
-        pRTDataItem->setAlpha(0.75f);
-        pRTDataItem->setTransform(mriHeadTrans);
-        pRTDataItem->applyTransform(fitResult.devHeadTrans);
-    }
+//        // source estimate
+//        epochCurrent = epochData[i]->epoch;
 
-    p3DAbstractView->show();
+//        pMinimumNorm = MinimumNorm::SPtr::create(invOp, fLambda2, sMethod);
+//        pMinimumNorm->doInverseSetup(epochData.length(), false);
+
+//        sourceEstimate = pMinimumNorm->calculateInverse(epochCurrent,0.0f,fTStep,true);
+
+//        if(!sourceEstimate.isEmpty()) {
+//            if(bDoLogging) {
+//                MNESourceEstimate sourceEstimateLH = MNESourceEstimate(sourceEstimate.data.block(0,0,iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(0,iNVertLh), 0, fTStep);
+//                MNESourceEstimate sourceEstimateRH = MNESourceEstimate(sourceEstimate.data.block(iNVertLh,0,sourceEstimate.data.rows()-iNVertLh,sourceEstimate.data.cols()), sourceEstimate.vertices.segment(iNVertLh,sourceEstimate.vertices.size()-iNVertLh), 0, fTStep);
+//                QString sTimeStamp = QDateTime::currentDateTime().toString("yyMMdd_hhmmss");
+//                QFile fileStcLh(sCurrentDir + "/" + sTimeStamp  + "_" + sID + "-lh.stc");
+//                sourceEstimateLH.write(fileStcLh);
+//                QFile fileStcRH(sCurrentDir + "/" + sTimeStamp  + "_" + sID + "-rh.stc");
+//                sourceEstimateRH.write(fileStcRH);
+//                IOUtils::write_eigen_matrix(epochCurrent, sCurrentDir + "/" + sTimeStamp  + "_" + sID + "-epoch.txt");
+//            }
+//        }
+    }
 
     // write hpi results
     if(bDoLogging) {
