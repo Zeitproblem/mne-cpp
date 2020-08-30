@@ -41,6 +41,7 @@
 #include <anShared/Management/communicator.h>
 #include <anShared/Management/analyzedata.h>
 #include <anShared/Model/fiffrawviewmodel.h>
+#include <anShared/Model/bemdatamodel.h>
 
 //=============================================================================================================
 // USED NAMESPACES
@@ -169,8 +170,12 @@ void DataLoader::loadFilePath(const QString& sFilePath)
 {
     QFileInfo fileInfo(sFilePath);
 
-    if(fileInfo.exists() && (fileInfo.completeSuffix() == "fif")) {
+    if(fileInfo.exists() && (fileInfo.completeSuffix() == "raw.fif")) {
         m_pAnalyzeData->loadModel<ANSHAREDLIB::FiffRawViewModel>(sFilePath);
+    } else if(fileInfo.exists() && (fileInfo.completeSuffix() == "bem.fif")) {
+        m_pAnalyzeData->loadModel<ANSHAREDLIB::BemDataModel>(sFilePath);
+    } else {
+        qWarning() << "[DataLoader::loadFilePath] Make sure that your files agree with the MNE naming conventions, eg.: *bem.fif; *raw.fif.";
     }
 }
 
