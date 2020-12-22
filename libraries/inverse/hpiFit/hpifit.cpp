@@ -286,13 +286,20 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     VectorXi vecChIdcs(iNumCoils);
 
     for (int j = 0; j < iNumCoils; j++) {
-        int iChIdx = 0;
-        VectorXd::Index indMax;
-        matAmp.col(j).cwiseAbs().maxCoeff(&indMax);
-        if(indMax < m_vecInnerind.size()) {
-            iChIdx = m_vecInnerind.at(indMax);
+        double maxVal = 0;
+        int chIdx = 0;
+
+        for (int i = 0; i < matAmp.rows(); ++i) {
+            if(std::fabs(matAmp(i,j)) > maxVal) {
+                maxVal = std::fabs(matAmp(i,j));
+
+                if(chIdx < m_vecInnerind.size()) {
+                    chIdx = m_vecInnerind.at(i);
+                }
+            }
         }
-        vecChIdcs(j) = iChIdx;
+
+        vecChIdcs(j) = chIdx;
     }
 
     vecError.resize(iNumCoils);
