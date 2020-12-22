@@ -47,6 +47,7 @@
 #include <scMeas/realtimemultisamplearray.h>
 #include <scMeas/realtimehpiresult.h>
 #include <inverse/hpiFit/hpifit.h>
+#include <utils/ioutils.h>
 
 //=============================================================================================================
 // QT INCLUDES
@@ -298,7 +299,7 @@ void Hpi::updateProjections()
 
         if(m_bUseSSP) {
             // Use SSP + SGM + calibration
-            //Do a copy here because we are going to change the activity flags of the SSP's
+            // Do a copy here because we are going to change the activity flags of the SSP's
             FiffInfo infoTemp = *(m_pFiffInfo.data());
 
             //Turn on all SSP
@@ -324,6 +325,7 @@ void Hpi::updateProjections()
         }
 
         m_mutex.lock();
+        m_matProjectors = matProjectors;
         m_matCompProjectors = matProjectors * matComp;
         m_mutex.unlock();
     }
@@ -460,6 +462,7 @@ void Hpi::run()
         m_mutex.lock();
         if(m_pFiffInfo) {
             bFiffInfo = true;
+            m_pFiffInfo->linefreq=60;
         }
         m_mutex.unlock();
         if(bFiffInfo) {
@@ -476,7 +479,7 @@ void Hpi::run()
 
     FiffCoordTrans transDevHeadRef = m_pFiffInfo->dev_head_t;
 
-    HPIFit HPI = HPIFit(m_pFiffInfo);
+    HPIFit HPI = HPIFit(m_pFiffInfo,true);
 
     double dErrorMax = 0.0;
     double dMeanErrorDist = 0.0;
@@ -522,6 +525,7 @@ void Hpi::run()
                 m_mutex.lock();
                 if(m_bDoFreqOrder) {
                     // find correct frequencie order if requested
+                    // matDataMerged = m_matCompProjectors * matDataMerged;
                     HPI.findOrder(matDataMerged,
                                   m_matCompProjectors,
                                   fitResult.devHeadTrans,
@@ -534,8 +538,10 @@ void Hpi::run()
                 }
                 m_mutex.unlock();
 
+
                 // Perform actual fitting
                 m_mutex.lock();
+//                matDataMerged = m_matCompProjectors * matDataMerged;
                 HPI.fitHPI(matDataMerged,
                            m_matCompProjectors,
                            fitResult.devHeadTrans,
