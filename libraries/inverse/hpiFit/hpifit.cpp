@@ -185,19 +185,19 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     coil.dpfiterror = VectorXd::Zero(iNumCoils);
     coil.dpfitnumitr = VectorXd::Zero(iNumCoils);
 
-//    // Compute simsig
-//    int iSamLoc = t_mat.cols();
-//    int iSamF = pFiffInfo->sfreq;
-//    MatrixXd matSimsig;
-//    VectorXd vecTime = VectorXd::LinSpaced(iSamLoc, 0, iSamLoc-1) *1.0/iSamF;
+    // Compute simsig
+    int iSamLoc = t_mat.cols();
+    int iSamF = pFiffInfo->sfreq;
+    MatrixXd matSimsig;
+    VectorXd vecTime = VectorXd::LinSpaced(iSamLoc, 0, iSamLoc-1) *1.0/iSamF;
 
-//    // Generate simulated data Matrix
-//    matSimsig.conservativeResize(iSamLoc,iNumCoils*2);
+    // Generate simulated data Matrix
+    matSimsig.conservativeResize(iSamLoc,iNumCoils*2);
 
-//    for(int i = 0; i < iNumCoils; ++i) {
-//        matSimsig.col(i) = sin(2*M_PI*vecFreqs[i]*vecTime.array());
-//        matSimsig.col(i+iNumCoils) = cos(2*M_PI*vecFreqs[i]*vecTime.array());
-//    }
+    for(int i = 0; i < iNumCoils; ++i) {
+        matSimsig.col(i) = sin(2*M_PI*vecFreqs[i]*vecTime.array());
+        matSimsig.col(i+iNumCoils) = cos(2*M_PI*vecFreqs[i]*vecTime.array());
+    }
 
     // Create digitized HPI coil position matrix
     MatrixXd matHeadHPI(iNumCoils,3);
@@ -255,11 +255,11 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     MatrixXd matAmp(m_vecInnerind.size(), iNumCoils);
     MatrixXd matAmpC(m_vecInnerind.size(), iNumCoils);
 
-    matTopo = m_matModel * matInnerdata.transpose(); // topo: # of good inner channel x 8
+    matTopo = matInnerdata * matSimsig.transpose(); // topo: # of good inner channel x 8
 
-    if(m_bDoFastFit) {
+    if(true) {
         // Select sine or cosine component depending on the relative size
-        matTopo.transposeInPlace();
+//        matTopo.transposeInPlace();
         matAmp = matTopo.leftCols(iNumCoils);
         matAmpC = matTopo.rightCols(iNumCoils);
         for(int j = 0; j < iNumCoils; ++j) {
@@ -288,7 +288,7 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     for (int j = 0; j < iNumCoils; j++) {
         int iChIdx = 0;
         VectorXd::Index indMax;
-        matAmp.col(j).maxCoeff(&indMax);
+        matAmp.col(j).cwiseAbs().maxCoeff(&indMax);
         if(indMax < m_vecInnerind.size()) {
             iChIdx = m_vecInnerind.at(indMax);
         }
