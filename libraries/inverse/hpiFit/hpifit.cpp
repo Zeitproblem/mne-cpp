@@ -255,7 +255,7 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     MatrixXd matAmp(m_vecInnerind.size(), iNumCoils);
     MatrixXd matAmpC(m_vecInnerind.size(), iNumCoils);
 
-    matTopo = matInnerdata * matSimsig.transpose(); // topo: # of good inner channel x 8
+    matTopo = matInnerdata * UTILSLIB::MNEMath::pinv(matSimsig).transpose(); // topo: # of good inner channel x 8
 
     if(true) {
         // Select sine or cosine component depending on the relative size
@@ -300,11 +300,16 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     MatrixXd matCoilPos = MatrixXd::Zero(iNumCoils,3);
 
     // Generate seed point by projection the found channel position 3cm inwards if previous transDevHead is identity or bad fit
-    if(transDevHead.trans == MatrixXd::Identity(4,4).cast<float>() || dError > 0.010) {
+    if(true) {
         for (int j = 0; j < vecChIdcs.rows(); ++j) {
             if(vecChIdcs(j) < pFiffInfo->chs.size()) {
-                Vector3f r0 = pFiffInfo->chs.at(vecChIdcs(j)).chpos.r0;
-                matCoilPos.row(j) = (-1 * pFiffInfo->chs.at(vecChIdcs(j)).chpos.ez * 0.03 + r0).cast<double>();
+                double x = pFiffInfo->chs.at(vecChIdcs(j)).chpos.r0[0];
+                double y = pFiffInfo->chs.at(vecChIdcs(j)).chpos.r0[1];
+                double z = pFiffInfo->chs.at(vecChIdcs(j)).chpos.r0[2];
+
+                matCoilPos(j,0) = -1 * pFiffInfo->chs.at(vecChIdcs(j)).chpos.ez[0] * 0.03 + x;
+                matCoilPos(j,1) = -1 * pFiffInfo->chs.at(vecChIdcs(j)).chpos.ez[1] * 0.03 + y;
+                matCoilPos(j,2) = -1 * pFiffInfo->chs.at(vecChIdcs(j)).chpos.ez[2] * 0.03 + z;
             }
         }
     } else {
