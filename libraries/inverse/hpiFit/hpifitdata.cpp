@@ -234,7 +234,7 @@ Eigen::MatrixXd HPIFitData::fminsearch(const Eigen::MatrixXd& matPos,
 
     DipFitError tempdip, fxr, fxe, fxc, fxcc;
 
-    tolx = tolf = m_fAbortError;
+    tolx = tolf = 1e-9;
 
     switch(iDisplay) {
         case 0:
