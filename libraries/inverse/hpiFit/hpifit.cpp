@@ -260,16 +260,22 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     if(true) {
         // Select sine or cosine component depending on the relative size
 //        matTopo.transposeInPlace();
-        matAmp = matTopo.leftCols(iNumCoils);
+        matAmp  = matTopo.leftCols(iNumCoils); // amp: # of good inner channel x 4
         matAmpC = matTopo.rightCols(iNumCoils);
+
         for(int j = 0; j < iNumCoils; ++j) {
-           float fNS = 0.0;
-           float fNC = 0.0;
-           fNS = matAmp.col(j).array().square().sum();
-           fNC = matAmpC.col(j).array().square().sum();
-           if(fNC > fNS) {
-               matAmp.col(j) = matAmpC.col(j);
-           }
+            float nS = 0.0;
+            float nC = 0.0;
+            for(int i = 0; i < m_vecInnerind.size(); ++i) {
+                nS += matAmp(i,j)*matAmp(i,j);
+                nC += matAmpC(i,j)*matAmpC(i,j);
+            }
+
+            if(nC > nS) {
+                for(int i = 0; i < m_vecInnerind.size(); ++i) {
+                    matAmp(i,j) = matAmpC(i,j);
+                }
+            }
         }
     } else {
         // estimate the sinusoid phase
