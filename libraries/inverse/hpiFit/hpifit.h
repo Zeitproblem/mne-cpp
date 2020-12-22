@@ -225,25 +225,17 @@ public:
 protected:
     //=========================================================================================================
     /**
-     * Fits dipoles for the given coils and a given data set.
-     *
-     * @param[in] CoilParam         The coil parameters.
-     * @param[in] sensors           The sensor information.
-     * @param[in] matData           The data which used to fit the coils.
-     * @param[in] iNumCoils         The number of coils.
-     * @param[in] t_matProjectors   The projectors to apply. Bad channels are still included.
-     * @param[in] iMaxIterations    The maximum allowed number of iterations used to fit the dipoles. Default is 500.
-     * @param[in] fAbortError       The error which will lead to aborting the dipole fitting process. Default is 1e-9.
-     *
-     * @return Returns the coil parameters.
-     */
-    CoilParam dipfit(struct CoilParam coil,
-                     const SensorSet& sensors,
-                     const Eigen::MatrixXd &matData,
-                     int iNumCoils,
-                     const Eigen::MatrixXd &t_matProjectors,
-                     int iMaxIterations,
-                     float fAbortError);
+    * Fits dipoles for the given coils and a given data set.
+    *
+    * @param[in] CoilParam       The coil parameters.
+    * @param[in] sensors         The sensor information.
+    * @param[in] data            The data which used to fit the coils.
+    * @param[in] numCoils        The number of coils.
+    * @param[in] t_matProjectors The projectors to apply. Bad channels are still included.
+    *
+    * @return Returns the coil parameters.
+    */
+    static CoilParam dipfit(struct CoilParam coil, struct SensorInfo sensors, const Eigen::MatrixXd &data, int numCoils, const Eigen::MatrixXd &t_matProjectors);
 
     //=========================================================================================================
     /**

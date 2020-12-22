@@ -541,9 +541,9 @@ void Hpi::run()
 
                 // Perform actual fitting
                 m_mutex.lock();
-//                matDataMerged = m_matCompProjectors * matDataMerged;
+                matDataMerged = m_matCompProjectors * matDataMerged;
                 HPI.fitHPI(matDataMerged,
-                           m_matCompProjectors,
+                           m_matProjectors,
                            fitResult.devHeadTrans,
                            m_vCoilFreqs,
                            fitResult.errorDistances,
