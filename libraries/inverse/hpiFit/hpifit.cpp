@@ -185,6 +185,20 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     coil.dpfiterror = VectorXd::Zero(iNumCoils);
     coil.dpfitnumitr = VectorXd::Zero(iNumCoils);
 
+//    // Compute simsig
+//    int iSamLoc = t_mat.cols();
+//    int iSamF = pFiffInfo->sfreq;
+//    MatrixXd matSimsig;
+//    VectorXd vecTime = VectorXd::LinSpaced(iSamLoc, 0, iSamLoc-1) *1.0/iSamF;
+
+//    // Generate simulated data Matrix
+//    matSimsig.conservativeResize(iSamLoc,iNumCoils*2);
+
+//    for(int i = 0; i < iNumCoils; ++i) {
+//        matSimsig.col(i) = sin(2*M_PI*vecFreqs[i]*vecTime.array());
+//        matSimsig.col(i+iNumCoils) = cos(2*M_PI*vecFreqs[i]*vecTime.array());
+//    }
+
     // Create digitized HPI coil position matrix
     MatrixXd matHeadHPI(iNumCoils,3);
 
@@ -199,6 +213,23 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
         matHeadHPI.fill(0);
     }
 
+    // get indicies of inner layer
+    int iNumCh = pFiffInfo->nchan;
+    m_vecInnerind.clear();
+    m_lChannels.clear();
+    for (int i = 0; i < iNumCh; ++i) {
+        if(pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_BABY_MAG ||
+            pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_VV_PLANAR_T1 ||
+            pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_VV_PLANAR_T2 ||
+            pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_VV_PLANAR_T3) {
+            // Check if the sensor is bad, if not append to innerind
+            if(!(pFiffInfo->bads.contains(pFiffInfo->ch_names.at(i)))) {
+                m_vecInnerind.append(i);
+                m_lChannels.append(pFiffInfo->chs[i]);
+            }
+        }
+    }
+
     //Create new projector based on the excluded channels, first exclude the rows then the columns
     MatrixXd matProjectorsRows(m_vecInnerind.size(),t_matProjectors.cols());
     MatrixXd matProjectorsInnerind(m_vecInnerind.size(),m_vecInnerind.size());
@@ -210,6 +241,7 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     for (int i = 0; i < matProjectorsInnerind.cols(); ++i) {
         matProjectorsInnerind.col(i) = matProjectorsRows.col(m_vecInnerind.at(i));
     }
+//    qDebug() << "matProjectorsInnerind" << matProjectorsInnerind.rows() << "x" << matProjectorsInnerind.cols();
 
     // Get the data from inner layer channels
     MatrixXd matInnerdata(m_vecInnerind.size(), t_mat.cols());
@@ -348,6 +380,8 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
         if(!QDir(sHPIResourceDir).exists()) {
             QDir().mkdir(sHPIResourceDir);
         }
+
+        UTILSLIB::IOUtils::write_eigen_matrix(matProjectorsInnerind, QString("%1/%2_matProjectors_mat").arg(sHPIResourceDir).arg(sTimeStamp));
 
         UTILSLIB::IOUtils::write_eigen_matrix(matCoilPos, QString("%1/%2_coilPosSeed_mat").arg(sHPIResourceDir).arg(sTimeStamp));
 
@@ -662,7 +696,8 @@ void HPIFit::updateChannels(QSharedPointer<FIFFLIB::FiffInfo> pFiffInfo)
 {
     // Get the indices of inner layer channels and exclude bad channels and create channellist
     int iNumCh = pFiffInfo->nchan;
-
+    m_vecInnerind.clear();
+    m_lChannels.clear();
     for (int i = 0; i < iNumCh; ++i) {
         if(pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_BABY_MAG ||
            pFiffInfo->chs[i].chpos.coil_type == FIFFV_COIL_VV_PLANAR_T1 ||
