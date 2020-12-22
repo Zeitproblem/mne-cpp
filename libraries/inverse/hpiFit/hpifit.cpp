@@ -189,14 +189,20 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     int iSamLoc = t_mat.cols();
     int iSamF = pFiffInfo->sfreq;
     MatrixXd matSimsig;
-    VectorXd vecTime = VectorXd::LinSpaced(iSamLoc, 0, iSamLoc-1) *1.0/iSamF;
+    VectorXd vecTime(iSamLoc);
+
+    for (int i = 0; i < iSamLoc; ++i) {
+        vecTime[i] = i*1.0/iSamF;
+    }
 
     // Generate simulated data Matrix
     matSimsig.conservativeResize(iSamLoc,iNumCoils*2);
 
     for(int i = 0; i < iNumCoils; ++i) {
-        matSimsig.col(i) = sin(2*M_PI*vecFreqs[i]*vecTime.array());
-        matSimsig.col(i+iNumCoils) = cos(2*M_PI*vecFreqs[i]*vecTime.array());
+        for(int j = 0; j < iSamLoc; ++j) {
+            matSimsig(j,i) = sin(2*M_PI*vecCoilfreq[i]*vecTime[j]);
+            matSimsig(j,i+iNumCoils) = cos(2*M_PI*vecCoilfreq[i]*vecTime[j]);
+        }
     }
 
     // Create digitized HPI coil position matrix
