@@ -330,13 +330,13 @@ private:
     /**
      * Find the correct order using permutation
      *
-     * @param[in] matTrans          The current transformation matrix
      * @param[in] matCoilDev        The coil positions in device space
      * @param[in] matDevHead        The coil positions in head space.
      *
      * @return The error value.
      */
-    QVector<int> orderCoils();
+    QVector<int> orderCoils(const Eigen::MatrixXd &matCoilDev,
+                            const Eigen::MatrixXd &matCoilHead);
 };
 
 //=============================================================================================================

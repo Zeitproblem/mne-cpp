@@ -748,4 +748,53 @@ double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
     return iGof;
 }
 
+//=============================================================================================================
 
+QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
+                                const Eigen::MatrixXd &matCoilHead)
+{
+    /*
+     *      Follows implementation from mne-python
+     *      https://github.com/mne-tools/mne-python/blob/59c3b921cf7609d0f2ffc19c1a7dc276110100a3/mne/chpi.py#L500
+     *
+     */
+
+    // get number of coils and initial order vector for permutation
+    int iCoils = matCoilDev.rows();
+    std::vector<int> vecOrder(iCoils);  // use std container because we use std::permutation later on
+    std::vector<int> vecBestOrder(iCoils);
+    for(int i = 0; i < iCoils; i++) {
+        vecOrder[i] = i;
+    }
+
+    MatrixXd matTempHead = matCoilHead;
+    MatrixXd matTrans = MatrixXd::Identity(4,4);
+    MatrixXd matBestTrans = MatrixXd::Identity(4,4);
+    double dBestG = -1.0;
+
+    FiffCoordTrans transRef;
+    float fAngle = 0.0;
+
+    // start permutation
+    do {
+        // reorder
+        for(int i = 0; i < iCoils; i++) {
+            matTempHead.row(i) = matCoilHead.row(vecOrder[i]);
+        }
+        matTrans = computeTransformation(matCoilDev,matTempHead);
+        int iGof = objFun(matTrans,matCoilDev,matTempHead);
+
+        // Penelaize by heavy rotation
+        fAngle = transRef.angleTo(matTrans);
+        iGof = std::pow(iGof* std::max(1.0-fAngle/M_PI,0.0) ,0.25);
+
+        if(iGof > dBestG) {
+            dBestG = iGof;
+            vecBestOrder = vecOrder;
+            matBestTrans = matTrans;
+        }
+
+    } while (std::next_permutation(vecOrder.begin(), vecOrder.end()));
+
+    return vecOrder;
+}
