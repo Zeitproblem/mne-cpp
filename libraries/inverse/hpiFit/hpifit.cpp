@@ -727,16 +727,24 @@ double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
                     const Eigen::MatrixXd &matCoilDev,
                     const Eigen::MatrixXd &matCoilHead)
 {
+    /*
+     *      Follows implementation from mne-python
+     *      https://github.com/mne-tools/mne-python/blob/59c3b921cf7609d0f2ffc19c1a7dc276110100a3/mne/chpi.py#L500
+     *
+     */
+
     double iDenom = 0;
     double iGof = 1.0;
-    iDenom = (matCoilHead.rowwise() - matCoilHead.colwise().mean()).norm();
-    iDenom *= iDenom;
     MatrixXd matRot = matTrans.block(0,0,3,3);
     VectorXd vecTrans = matTrans.block(0,3,3,0);
     MatrixXd matX = matCoilDev*matRot.transpose();
+    iDenom = (matCoilHead.rowwise() - matCoilHead.colwise().mean()).norm();
+    iDenom *= iDenom;
     matX = matX.colwise() + vecTrans;
     matX -= matCoilHead;
     matX *= matX;
     iGof -= matX.sum()/iDenom;
     return iGof;
 }
+
+
