@@ -720,3 +720,23 @@ void HPIFit::updateModel(const int iSamF,
     }
     m_matModel = matTemp;
 }
+
+//=============================================================================================================
+
+double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
+                    const Eigen::MatrixXd &matCoilDev,
+                    const Eigen::MatrixXd &matCoilHead)
+{
+    double iDenom = 0;
+    double iGof = 1.0;
+    iDenom = (matCoilHead.rowwise() - matCoilHead.colwise().mean()).norm();
+    iDenom *= iDenom;
+    MatrixXd matRot = matTrans.block(0,0,3,3);
+    VectorXd vecTrans = matTrans.block(0,3,3,0);
+    MatrixXd matX = matCoilDev*matRot.transpose();
+    matX = matX.colwise() + vecTrans;
+    matX -= matCoilHead;
+    matX *= matX;
+    iGof -= matX.sum()/iDenom;
+    return iGof;
+}

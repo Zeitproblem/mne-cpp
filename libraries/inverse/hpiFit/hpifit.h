@@ -52,7 +52,7 @@
 // EIGEN INCLUDES
 //=============================================================================================================
 
-#include <Eigen/Core>
+#include <Eigen/Dense>
 
 //=============================================================================================================
 // QT INCLUDES
@@ -311,6 +311,20 @@ private:
     QSharedPointer<FWDLIB::FwdCoilSet>  m_pCoilTemplate;    /**< */
     QSharedPointer<FWDLIB::FwdCoilSet>  m_pCoilMeg;         /**< */
     QVector<int>        m_vecFreqs;         /**< The frequencies for each coil in unknown order. */
+
+    //=========================================================================================================
+    /**
+     * the objective function for a good transformation
+     *
+     * @param[in] matTrans          The current transformation matrix
+     * @param[in] matCoilDev        The coil positions in device space
+     * @param[in] matDevHead        The coil positions in head space.
+     *
+     * @return The error value.
+     */
+    double objFun(const Eigen::MatrixXd &matTrans,
+                  const Eigen::MatrixXd &matCoilDev,
+                  const Eigen::MatrixXd &matCoilHead);
 
 };
 
