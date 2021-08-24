@@ -314,7 +314,21 @@ private:
 
     //=========================================================================================================
     /**
-     * the objective function for a good transformation
+     * the objective function to find the best coil combination
+     *
+     * @param[in] matTrans          The current transformation matrix
+     * @param[in] matCoilDev        The coil positions in device space
+     * @param[in] matDevHead        The coil positions in head space.
+     *
+     * @return The goodnes of the transform in %.
+     */
+    double objFun(const Eigen::MatrixXd &matTrans,
+                  const Eigen::MatrixXd &matCoilDev,
+                  const Eigen::MatrixXd &matCoilHead);
+
+    //=========================================================================================================
+    /**
+     * Find the correct order using permutation
      *
      * @param[in] matTrans          The current transformation matrix
      * @param[in] matCoilDev        The coil positions in device space
@@ -322,10 +336,7 @@ private:
      *
      * @return The error value.
      */
-    double objFun(const Eigen::MatrixXd &matTrans,
-                  const Eigen::MatrixXd &matCoilDev,
-                  const Eigen::MatrixXd &matCoilHead);
-
+    QVector<int> orderCoils();
 };
 
 //=============================================================================================================

@@ -724,8 +724,8 @@ void HPIFit::updateModel(const int iSamF,
 //=============================================================================================================
 
 double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
-                    const Eigen::MatrixXd &matCoilDev,
-                    const Eigen::MatrixXd &matCoilHead)
+                      const Eigen::MatrixXd &matCoilDev,
+                      const Eigen::MatrixXd &matCoilHead)
 {
     /*
      *      Follows implementation from mne-python
@@ -733,17 +733,18 @@ double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
      *
      */
 
-    double iDenom = 0;
+    double iDenom = 0.0;
     double iGof = 1.0;
     MatrixXd matRot = matTrans.block(0,0,3,3);
-    VectorXd vecTrans = matTrans.block(0,3,3,0);
+    VectorXd vecTrans = matTrans.block<3,1>(0,3);
     MatrixXd matX = matCoilDev*matRot.transpose();
     iDenom = (matCoilHead.rowwise() - matCoilHead.colwise().mean()).norm();
     iDenom *= iDenom;
-    matX = matX.colwise() + vecTrans;
+    matX = matX.rowwise() + vecTrans.transpose();
     matX -= matCoilHead;
-    matX *= matX;
+    matX = matX.cwiseProduct(matX);
     iGof -= matX.sum()/iDenom;
+
     return iGof;
 }
 
