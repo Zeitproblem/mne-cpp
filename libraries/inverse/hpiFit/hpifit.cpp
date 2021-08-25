@@ -721,11 +721,9 @@ void HPIFit::updateModel(const int iSamF,
     m_matModel = matTemp;
 }
 
-//=============================================================================================================
-
-double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
-                      const Eigen::MatrixXd &matCoilDev,
-                      const Eigen::MatrixXd &matCoilHead)
+double objFun(const Eigen::MatrixXd &matTrans,
+              const Eigen::MatrixXd &matCoilDev,
+              const Eigen::MatrixXd &matCoilHead)
 {
     /*
      *      Follows implementation from mne-python
@@ -733,19 +731,25 @@ double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
      *
      */
 
-    double iDenom = 0.0;
-    double iGof = 1.0;
+    double dDenom = 0.0;
+    double dGof = 0.0;
+    double dSquaredSum = 0.0;
     MatrixXd matRot = matTrans.block(0,0,3,3);
     VectorXd vecTrans = matTrans.block<3,1>(0,3);
-    MatrixXd matX = matCoilDev*matRot.transpose();
-    iDenom = (matCoilHead.rowwise() - matCoilHead.colwise().mean()).norm();
-    iDenom *= iDenom;
-    matX = matX.rowwise() + vecTrans.transpose();
-    matX -= matCoilHead;
-    matX = matX.cwiseProduct(matX);
-    iGof -= matX.sum()/iDenom;
 
-    return iGof;
+    MatrixXd matX = matCoilDev*matRot; // apply rotation
+    matX = matX.rowwise() + vecTrans.transpose(); // apply translation
+    matX -= matCoilHead; // substract target
+    matX = matX.cwiseProduct(matX); // square values
+    dSquaredSum = matX.sum(); // sum up
+
+    VectorXd vecCenter = matCoilHead.colwise().mean(); // center of gravity
+    dDenom = (matCoilHead.rowwise() - vecCenter.transpose()).norm(); // substract center of gravity -> centralize and take norm
+    dDenom *= dDenom; // square
+
+    dGof = 1.0 - dSquaredSum/dDenom;
+
+    return dGof;
 }
 
 //=============================================================================================================
@@ -785,7 +789,7 @@ QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
         int iGof = objFun(matTrans,matCoilDev,matTempHead);
 
         // Penelaize by heavy rotation
-        fAngle = transRef.angleTo(matTrans);
+        fAngle = transRef.angleTo(matTrans.cast<float>());
         iGof = std::pow(iGof* std::max(1.0-fAngle/M_PI,0.0) ,0.25);
 
         if(iGof > dBestG) {
@@ -796,5 +800,5 @@ QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
 
     } while (std::next_permutation(vecOrder.begin(), vecOrder.end()));
 
-    return vecOrder;
+    return QVector<int>::fromStdVector(vecOrder);
 }
