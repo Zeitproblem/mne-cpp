@@ -774,7 +774,7 @@ QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
     MatrixXd matTempHead = matCoilHead;
     MatrixXd matTrans = MatrixXd::Identity(4,4);
     MatrixXd matBestTrans = MatrixXd::Identity(4,4);
-    double dBestG = -1.0;
+    double dBestG = -1.0; // can be negative quite often
 
     FiffCoordTrans transRef;
     float fAngle = 0.0;
@@ -786,14 +786,14 @@ QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
             matTempHead.row(i) = matCoilHead.row(vecOrder[i]);
         }
         matTrans = computeTransformation(matCoilDev,matTempHead);
-        int iGof = objFun(matTrans,matCoilDev,matTempHead);
+        int dGof = objFun(matTrans,matCoilDev,matTempHead);
 
         // Penelaize by heavy rotation
         fAngle = transRef.angleTo(matTrans.cast<float>());
-        iGof = std::pow(iGof* std::max(1.0-fAngle/M_PI,0.0) ,0.25);
+        dGof = std::pow(dGof* std::max(1.0-fAngle/M_PI,0.0) ,0.25);
 
-        if(iGof > dBestG) {
-            dBestG = iGof;
+        if(dGof > dBestG) {
+            dBestG = dGof;
             vecBestOrder = vecOrder;
             matBestTrans = matTrans;
         }
