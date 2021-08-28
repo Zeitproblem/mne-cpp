@@ -320,7 +320,7 @@ private:
      * @param[in] matCoilDev        The coil positions in device space
      * @param[in] matDevHead        The coil positions in head space.
      *
-     * @return The goodnes of the transform in %.
+     * @return The goodnes of the transform.
      */
     double objFun(const Eigen::MatrixXd &matTrans,
                   const Eigen::MatrixXd &matCoilDev,
@@ -335,8 +335,8 @@ private:
      *
      * @return The error value.
      */
-    QVector<int> orderCoils(const Eigen::MatrixXd &matCoilDev,
-                            const Eigen::MatrixXd &matCoilHead);
+    Eigen::MatrixXd orderCoils(const Eigen::MatrixXd &matCoilDev,
+                               Eigen::MatrixXd &matCoilHead);
 };
 
 //=============================================================================================================

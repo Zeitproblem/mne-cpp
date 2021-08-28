@@ -286,7 +286,10 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
                   iMaxIterations,
                   fAbortError);
 
-    Matrix4d matTrans = computeTransformation(matHeadHPI, coil.pos);
+    // bring coils into right order
+    Matrix4d matTrans = orderCoils(coil.pos,matHeadHPI);
+    qDebug() << vecFreqs;
+    // Matrix4d matTrans = computeTransformation(matTempHead, coil.pos);
     //Eigen::Matrix4d matTrans = computeTransformation(coil.pos, matHeadHPI);
 
     // Store the final result to fiff info
@@ -721,9 +724,9 @@ void HPIFit::updateModel(const int iSamF,
     m_matModel = matTemp;
 }
 
-double objFun(const Eigen::MatrixXd &matTrans,
-              const Eigen::MatrixXd &matCoilDev,
-              const Eigen::MatrixXd &matCoilHead)
+double HPIFit::objFun(const Eigen::MatrixXd &matTrans,
+                      const Eigen::MatrixXd &matCoilDev,
+                      const Eigen::MatrixXd &matCoilHead)
 {
     /*
      *      Follows implementation from mne-python
@@ -754,8 +757,8 @@ double objFun(const Eigen::MatrixXd &matTrans,
 
 //=============================================================================================================
 
-QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
-                                const Eigen::MatrixXd &matCoilHead)
+MatrixXd HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
+                                Eigen::MatrixXd &matCoilHead)
 {
     /*
      *      Follows implementation from mne-python
@@ -786,19 +789,27 @@ QVector<int> HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
             matTempHead.row(i) = matCoilHead.row(vecOrder[i]);
         }
         matTrans = computeTransformation(matCoilDev,matTempHead);
-        int dGof = objFun(matTrans,matCoilDev,matTempHead);
+        double dGof = objFun(matTrans,matCoilDev,matTempHead);
 
         // Penelaize by heavy rotation
         fAngle = transRef.angleTo(matTrans.cast<float>());
         dGof = std::pow(dGof* std::max(1.0-fAngle/M_PI,0.0) ,0.25);
 
         if(dGof > dBestG) {
+            qDebug() << dGof;
             dBestG = dGof;
             vecBestOrder = vecOrder;
             matBestTrans = matTrans;
+            matCoilHead = matTempHead;
         }
 
     } while (std::next_permutation(vecOrder.begin(), vecOrder.end()));
 
-    return QVector<int>::fromStdVector(vecOrder);
+    std::cout << vecBestOrder[0]
+              << vecBestOrder[1]
+              << vecBestOrder[2]
+              << vecBestOrder[3]
+              << std::endl;
+
+    return matBestTrans;
 }
