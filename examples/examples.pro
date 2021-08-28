@@ -64,6 +64,7 @@ SUBDIRS += \
     ex_read_fwd \
     ex_read_raw \
     ex_read_write_raw \
+    play
 
     qtHaveModule(charts) {
         SUBDIRS += \
