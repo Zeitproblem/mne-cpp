@@ -56,6 +56,7 @@
 //=============================================================================================================
 
 #include <Eigen/Dense>
+#include <rtprocessing/icp.h>
 
 //=============================================================================================================
 // QT INCLUDES
@@ -286,20 +287,79 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
                   iMaxIterations,
                   fAbortError);
 
+    // drop coils
+    int iNumUsed = iNumCoils;
+
+    // use at minimum three coils
+    // store Goodness of Fit
+    vecGoF = coil.dpfiterror;
+    for(int i = 0; i < vecGoF.size(); ++i) {
+        vecGoF(i) = 1 - vecGoF(i);
+    }
+
+    Matrix4f matTrans(4,4);
+    MatrixXd matHeadTemp = matHeadHPI;
+    MatrixXd matHeadDrop;
+    MatrixXd matCoilDrop;
+    MatrixXd matCoilTemp = coil.pos;
+    VectorXd vecGofTemp = vecGoF;
+    VectorXd vecGofDrop = vecGoF;
+
+    if(vecGoF.minCoeff() < 0.75) { // hard coded, can potentially be passed as variable
+        std::cout << vecGoF << std::endl;
+
+        while(iNumUsed > 3) {
+            int iR = 0;
+            matCoilDrop.conservativeResize(iNumUsed-1,3);
+            matHeadDrop.conservativeResize(iNumUsed-1,3);
+            vecGofDrop.conservativeResize(iNumUsed-1,1);
+
+            for(int i = 0; i < iNumUsed; i++){
+                if(vecGofTemp[i] != vecGofTemp.minCoeff()) {
+                    matHeadDrop.row(iR) = matHeadTemp.row(i);
+                    matCoilDrop.row(iR) = matCoilTemp.row(i);
+                    vecGofDrop(iR) = vecGofTemp(i);
+                    iR++;
+
+                } else {
+                    qInfo() << "Dropped coil: " << i << " with GoF: "  << vecGofTemp[i];
+                }
+            }
+            matHeadTemp = matHeadDrop;
+            matCoilTemp = matCoilDrop;
+            vecGofTemp = vecGofDrop;
+            // matTrans = computeTransformation(matHeadTemp, matCoilTemp);
+            RTPROCESSINGLIB::fitMatchedPoints(matHeadTemp.cast<float>(), matCoilTemp.cast<float>(), matTrans, 1.0, true, VectorXf::Ones(iNumUsed-1));
+            iNumUsed--;
+        }
+    } else {
+        RTPROCESSINGLIB::fitMatchedPoints(matHeadHPI.cast<float>(), coil.pos.cast<float>(), matTrans, 1.0, true, VectorXf::Ones(iNumUsed));
+    }
+//    Vector4d vecOrder(2,3,1,0);
+//    MatrixXd temp = matHeadHPI;
+//    for(int i = 0; i < 4; i++) {
+//        matHeadHPI.row(i) = temp.row(vecOrder(i));
+//    }
     // bring coils into right order
-    Matrix4d matTrans = orderCoils(coil.pos,matHeadHPI);
+    // matTrans = orderCoils(coil.pos,matHeadHPI);
     qDebug() << vecFreqs;
-    // Matrix4d matTrans = computeTransformation(matTempHead, coil.pos);
+
+    Matrix4d matTransA = computeTransformation(matHeadHPI, coil.pos);
     //Eigen::Matrix4d matTrans = computeTransformation(coil.pos, matHeadHPI);
+
+    std::cout << "without" << std::endl << matTransA.transpose() << std::endl;
+    std::cout << "with" << std::endl << matTrans.transpose() << std::endl;
 
     // Store the final result to fiff info
     // Set final device/head matrix and its inverse to the fiff info
     transDevHead.from = 1;
     transDevHead.to = 4;
-    transDevHead.trans = matTrans.cast<float>();
 
+    transDevHead.trans = matTrans.cast<float>();
+     transDevHead.trans.row(3) = Vector4f(0,0,0,1);
     // Also store the inverse
     transDevHead.invtrans = transDevHead.trans.inverse();
+     transDevHead.invtrans.row(3) = Vector4f(0,0,0,1);
 
     //Calculate Error
     MatrixXd matTemp = coil.pos;
@@ -308,13 +368,22 @@ void HPIFit::fitHPI(const MatrixXd& t_mat,
     matTemp.block(0,3,iNumCoils,1).setOnes();
     matTemp.transposeInPlace();
 
-    MatrixXd matTestPos = matTrans * matTemp;
-    MatrixXd matDiffPos = matTestPos.block(0,0,3,iNumCoils) - matHeadHPI.transpose();
+    MatrixXd matTestPos = matTrans.cast<double>() * matTemp;
+    MatrixXd matTestPosA = matTransA.cast<double>() * matTemp;
+
+    MatrixXd matDiffPos = matTestPosA.block(0,0,3,iNumCoils) - matHeadHPI.transpose();
+
+
+    std::cout << std::endl << std::endl << "HPIFit::fitHPI - Fitted Points" << std::endl << coil.pos << std::endl;
+    std::cout << std::endl << std::endl << "HPIFit::fitHPI - Head Points" << std::endl << matHeadHPI << std::endl;
+    std::cout << std::endl << std::endl << "HPIFit::fitHPI - transformed with" << std::endl << matTestPos.transpose() << std::endl;
+    std::cout << std::endl << std::endl << "HPIFit::fitHPI - transformed without" << std::endl << matTestPosA.transpose() << std::endl;
+    std::cout << std::endl << std::endl << "HPIFit::fitHPI - matDiffPos " << std::endl << matDiffPos.transpose() << std::endl;
 
     for(int i = 0; i < matDiffPos.cols(); ++i) {
         vecError[i] = matDiffPos.col(i).norm();
     }
-
+    qInfo() << vecError;
     // store Goodness of Fit
     vecGoF = coil.dpfiterror;
     for(int i = 0; i < vecGoF.size(); ++i) {
@@ -775,8 +844,8 @@ MatrixXd HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
     }
 
     MatrixXd matTempHead = matCoilHead;
-    MatrixXd matTrans = MatrixXd::Identity(4,4);
-    MatrixXd matBestTrans = MatrixXd::Identity(4,4);
+    Matrix4f matTrans = Matrix4f::Identity(4,4);
+    Matrix4f matBestTrans = Matrix4f::Identity(4,4);
     double dBestG = -1.0; // can be negative quite often
 
     FiffCoordTrans transRef;
@@ -788,8 +857,10 @@ MatrixXd HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
         for(int i = 0; i < iCoils; i++) {
             matTempHead.row(i) = matCoilHead.row(vecOrder[i]);
         }
-        matTrans = computeTransformation(matCoilDev,matTempHead);
-        double dGof = objFun(matTrans,matCoilDev,matTempHead);
+        //matTrans = computeTransformation(matCoilDev,matTempHead);
+        RTPROCESSINGLIB::fitMatchedPoints(matTempHead.cast<float>(), matCoilDev.cast<float>(), matTrans, 1.0, true, VectorXf::Ones(iCoils));
+
+        double dGof = objFun(matTrans.cast<double>(),matCoilDev,matTempHead);
 
         // Penelaize by heavy rotation
         fAngle = transRef.angleTo(matTrans.cast<float>());
@@ -811,5 +882,5 @@ MatrixXd HPIFit::orderCoils(const Eigen::MatrixXd &matCoilDev,
               << vecBestOrder[3]
               << std::endl;
 
-    return matBestTrans;
+    return matBestTrans.cast<double>();
 }

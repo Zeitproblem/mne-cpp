@@ -67,12 +67,14 @@ CONFIG(debug, debug|release) {
             -lmnecppFiffd \
             -lmnecppFsd \
             -lmnecppUtilsd \
+	    -lmnecppRtProcessingd \
 } else {
     LIBS += -lmnecppFwd \
             -lmnecppMne \
             -lmnecppFiff \
             -lmnecppFs \
             -lmnecppUtils \
+	    -lmnecppRtProcessing \
 }
 
 SOURCES += \
