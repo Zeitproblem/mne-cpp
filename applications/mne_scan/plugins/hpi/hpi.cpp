@@ -42,6 +42,7 @@
 #include "hpi.h"
 
 #include "FormFiles/hpisetupwidget.h"
+#include <utils/ioutils.h>
 
 #include <disp/viewers/hpisettingsview.h>
 #include <scMeas/realtimemultisamplearray.h>
@@ -546,6 +547,7 @@ void Hpi::run()
     fitResult.devHeadTrans = m_pFiffInfo->dev_head_t;
     fitResult.devHeadTrans.from = 1;
     fitResult.devHeadTrans.to = 4;
+    QElapsedTimer timer;
 
     FiffCoordTrans transDevHeadRef = m_pFiffInfo->dev_head_t;
 
@@ -566,6 +568,9 @@ void Hpi::run()
     m_mutex.unlock();
 
     MatrixXd matDataMerged(m_pFiffInfo->chs.size(), fittingWindowSize);
+    MatrixXd matPosition;
+    int i = 0;
+    float fTimer = 0.0;
 
     while(!isInterruptionRequested()) {
         m_mutex.lock();
@@ -612,6 +617,7 @@ void Hpi::run()
 
                 // Perform actual fitting
                 m_mutex.lock();
+                timer.start();
                 HPI.fitHPI(matDataMerged,
                            m_matCompProjectors,
                            fitResult.devHeadTrans,
@@ -620,7 +626,11 @@ void Hpi::run()
                            fitResult.GoF,
                            fitResult.fittedCoils,
                            m_pFiffInfo);
+                fTimer = timer.elapsed();
                 m_mutex.unlock();
+                HPIFit::storeHeadPosition(i, fitResult.devHeadTrans.trans, matPosition, fitResult.GoF, fitResult.errorDistances);
+                matPosition(i,9) = fTimer;
+                i++;
 
                 //Check if the error meets distance requirement
                 if(fitResult.errorDistances.size() > 0) {
@@ -662,6 +672,7 @@ void Hpi::run()
             }
         }
     }
+    IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/position.txt");
 }
 
 //=============================================================================================================
