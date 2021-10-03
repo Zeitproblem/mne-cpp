@@ -96,14 +96,30 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription("hpiFit Example");
     parser.addHelpOption();
     qInfo() << "Please download the mne-cpp-test-data folder from Github (mne-tools) into mne-cpp/bin.";
-    QCommandLineOption inputOption("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/MEG/sample/test_hpiFit_raw.fif");
+    QCommandLineOption inFile("fileIn", "The input file <in>.", "in", QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/MEG/sample/test_hpiFit_raw.fif");
+    QCommandLineOption inBuffer("buffer", "The buffer size <in>.", "in","200");
+    QCommandLineOption inFreqs("freqs", "The frequencies used <in>.", "in","154,158,161,166");
+    QCommandLineOption inSave("save", "Weather to store data <in>.", "in","0");
+    QCommandLineOption inVerbose("verbose", "Command Line output <in>.", "out","0");
+    QCommandLineOption outName("fileOut", "The output file for movement data <out>.", "out","position.txt");
 
-    parser.addOption(inputOption);
+    parser.addOption(inFile);
+    parser.addOption(inBuffer);
+    parser.addOption(inFreqs);
+    parser.addOption(inSave);
+    parser.addOption(inVerbose);
+    parser.addOption(outName);
 
     parser.process(a);
 
+    int iQuantum = parser.value(inBuffer).toInt();
+    QStringList lFreqs = parser.value(inFreqs).split(",");
+    QFile t_fileIn(parser.value(inFile));
+    bool bSave = parser.value(inSave).toInt();
+    bool bVerbose = parser.value(inVerbose).toInt();
+    QString sNameOut(parser.value(outName));
+
     // Init data loading and writing
-    QFile t_fileIn(parser.value(inputOption));
     FiffRawData raw(t_fileIn);
     QSharedPointer<FiffInfo> pFiffInfo = QSharedPointer<FiffInfo>(new FiffInfo(raw.info));
 
@@ -121,26 +137,19 @@ int main(int argc, char *argv[])
     fiff_int_t first = raw.first_samp;
     fiff_int_t last = raw.last_samp;
 
-    float fQuantumSec = 0.2f;       // read and write in 200 ms junks
-    fiff_int_t iQuantum = ceil(fQuantumSec*pFiffInfo->sfreq);
-
     // create time vector that specifies when to fit
     float fTSec = 0.1;                              // time between hpi fits
     int iQuantumT = floor(fTSec*pFiffInfo->sfreq);   // samples between fits
     int iN = floor((last-first)/iQuantumT);
     RowVectorXf vecTime = RowVectorXf::LinSpaced(iN, 0, iN-1) * fTSec;
-
-    // To fit at specific times outcommend the following block
-    // Read Quaternion File
-//    MatrixXd matPos;
-//    qInfo() << "Specify the path to your Position file (.txt)";
-//    IOUtils::read_eigen_matrix(matPos, QCoreApplication::applicationDirPath() + "/mne-cpp-test-data/Result/ref_hpiFit_pos.txt");
-//    RowVectorXd vecTime = matPos.col(0);
-
     MatrixXd matPosition;              // matPosition matrix to save quaternions etc.
 
     // setup informations for HPI fit (VectorView)
-    QVector<int> vecFreqs {154,158,161,166};
+    QVector<int> vecFreqs(lFreqs.size());
+    for(int i = 0; i < lFreqs.size(); i++) {
+        vecFreqs[i] = lFreqs[i].toInt();
+    }
+
     QVector<double> vecError;
     VectorXd vecGoF;
     FiffDigPointSet fittedPointSet;
@@ -180,7 +189,6 @@ int main(int argc, char *argv[])
     qInfo() << "[done]";
 
     // order frequencies
-    qInfo() << "Find Order...";
     timer.start();
     HPI.findOrder(matData,
                   matProjectors,
@@ -190,11 +198,11 @@ int main(int argc, char *argv[])
                   vecGoF,
                   fittedPointSet,
                   pFiffInfo);
-    qInfo() << "Ordered Frequencies: ";
-    qInfo() << "findOrder() took" << timer.elapsed() << "milliseconds";
-    qInfo() << "[done]";
 
     float fTimer = 0.0;
+
+    MatrixXd matPosOld = MatrixXd::Zero(4,3);
+    MatrixXd matPosNew = MatrixXd::Zero(4,3);
 
     // read and fit
     for(int i = 0; i < vecTime.size(); i++) {
@@ -209,9 +217,7 @@ int main(int argc, char *argv[])
             qCritical("error during read_raw_segment");
             return -1;
         }
-        qInfo() << "[done]";
 
-        qInfo() << "HPI-Fit...";
         timer.start();
         HPI.fitHPI(matData,
                    matProjectors,
@@ -224,16 +230,22 @@ int main(int argc, char *argv[])
                    bDoDebug,
                    sHPIResourceDir);
         fTimer = timer.elapsed();
-        qInfo() << "The HPI-Fit took" << fTimer << "milliseconds";
-        qInfo() << "[done]";
 
         HPIFit::storeHeadPosition(vecTime(i), pFiffInfo->dev_head_t.trans, matPosition, vecGoF, vecError);
         matPosition(i,9) = fTimer;
         // if big head displacement occures, update debHeadTrans
         if(MNEMath::compareTransformation(transDevHead.trans, pFiffInfo->dev_head_t.trans, fThreshRot, fThreshTrans)) {
             transDevHead = pFiffInfo->dev_head_t;
-            qInfo() << "dev_head_t has been updated.";
+        }
+
+        if(bVerbose) {
+            qInfo() << "Iteration" << i << "Of" << vecTime.size()
+                    << " Time" << fTimer << "ms"
+                    << " Error" << vecError[0]*1000 << vecError[1]*1000 << vecError[2]*1000 << vecError[3]*1000
+                    << " GoF" << vecGoF[0] << vecGoF[1] << vecGoF[2] << vecGoF[3];
         }
     }
-    // IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/position.txt");
+    if(bSave) {
+        IOUtils::write_eigen_matrix(matPosition, QCoreApplication::applicationDirPath() + "/MNE-sample-data/" + sNameOut);
+    }
 }
